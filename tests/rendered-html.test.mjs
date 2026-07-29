@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -55,4 +56,18 @@ test("server-renders the Flight Loom experience", async () => {
   assert.doesNotMatch(html, /codex-preview/);
   assert.doesNotMatch(html, /Your site is taking shape/);
   assert.doesNotMatch(html, /react-loading-skeleton/);
+});
+
+test("native video controls prime Web Audio during event capture", async () => {
+  const source = await readFile(
+    new URL("../app/components/FlightLoom.tsx", import.meta.url),
+    "utf8",
+  );
+  const shellStart = source.indexOf('className="video-shell"');
+  const videoStart = source.indexOf("<video", shellStart);
+  const shellOpening = source.slice(shellStart, videoStart);
+
+  assert.ok(shellStart >= 0 && videoStart > shellStart);
+  assert.match(shellOpening, /onPointerDownCapture={unlockSoundscape}/);
+  assert.match(shellOpening, /onPointerUpCapture={unlockSoundscape}/);
 });

@@ -1057,7 +1057,16 @@ export function FlightLoom() {
                 <strong>{sourceLabel}</strong>
               </div>
             </div>
-            <div className="video-shell">
+            <div
+              className="video-shell"
+              onPointerDownCapture={unlockSoundscape}
+              onPointerUpCapture={unlockSoundscape}
+              onKeyDownCapture={(event) => {
+                if (event.key === " " || event.key === "Enter") {
+                  unlockSoundscape();
+                }
+              }}
+            >
               <video
                 key={usingSample ? "sample-flight" : customVideoUrl}
                 ref={demoVideoRef}
@@ -1071,12 +1080,6 @@ export function FlightLoom() {
                 controls
                 preload="metadata"
                 aria-label="Source drone video"
-                onPointerDown={unlockSoundscape}
-                onKeyDown={(event) => {
-                  if (event.key === " " || event.key === "Enter") {
-                    unlockSoundscape();
-                  }
-                }}
                 onPlay={handleVideoPlay}
                 onPause={() => {
                   hushFlightAmbient(audioRef.current);
