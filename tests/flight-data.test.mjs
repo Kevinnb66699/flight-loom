@@ -8,6 +8,7 @@ import {
   normalize,
   reorderSegments,
   sampleFlight,
+  sampleFlightSource,
   toggleReverse,
 } from "../app/lib/flight-data.ts";
 
@@ -23,52 +24,52 @@ test("sampleFlight exposes five valid, deterministic segments", () => {
     assert.ok(segment.lift >= -1 && segment.lift <= 1);
     assert.ok(segment.sceneShift >= 0 && segment.sceneShift <= 1);
   }
+
+  const duration = sampleFlight.reduce(
+    (total, segment) => total + segment.duration,
+    0,
+  );
+  assert.ok(Math.abs(duration - sampleFlightSource.duration) < 0.01);
+  assert.match(sampleFlightSource.videoSrc, /^\/demo\/.+\.mp4$/);
+  assert.match(sampleFlightSource.webmSrc, /^\/demo\/.+\.webm$/);
+  assert.match(sampleFlightSource.posterSrc, /^\/demo\/.+\.webp$/);
 });
 
 test("moveSegment reorders without mutating its input", () => {
   const original = [...sampleFlight];
   const moved = moveSegment(original, 0, 3);
+  const ids = sampleFlight.map(({ id }) => id);
 
   assert.deepEqual(
     moved.map(({ id }) => id),
-    [
-      "canyon-arc",
-      "cloud-lift",
-      "forest-pulse",
-      "dawn-thread",
-      "homeward-drift",
-    ],
+    [ids[1], ids[2], ids[3], ids[0], ids[4]],
   );
   assert.deepEqual(original, sampleFlight);
 });
 
 test("reorderSegments moves by stable segment ids", () => {
+  const ids = sampleFlight.map(({ id }) => id);
   const reordered = reorderSegments(
     sampleFlight,
-    "homeward-drift",
-    "canyon-arc",
+    ids[4],
+    ids[1],
   );
 
   assert.deepEqual(
     reordered.map(({ id }) => id),
-    [
-      "dawn-thread",
-      "homeward-drift",
-      "canyon-arc",
-      "cloud-lift",
-      "forest-pulse",
-    ],
+    [ids[0], ids[4], ids[1], ids[2], ids[3]],
   );
 });
 
 test("toggleReverse and cycleRepeats only update the requested segment", () => {
-  const reversed = toggleReverse(sampleFlight, "cloud-lift");
+  const targetId = sampleFlight[2].id;
+  const reversed = toggleReverse(sampleFlight, targetId);
   assert.equal(reversed[2].reversed, true);
   assert.strictEqual(reversed[0], sampleFlight[0]);
 
-  const twice = cycleRepeats(reversed, "cloud-lift");
-  const threeTimes = cycleRepeats(twice, "cloud-lift");
-  const reset = cycleRepeats(threeTimes, "cloud-lift");
+  const twice = cycleRepeats(reversed, targetId);
+  const threeTimes = cycleRepeats(twice, targetId);
+  const reset = cycleRepeats(threeTimes, targetId);
 
   assert.equal(twice[2].repeats, 2);
   assert.equal(threeTimes[2].repeats, 3);

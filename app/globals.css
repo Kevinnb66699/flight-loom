@@ -197,6 +197,65 @@ button:focus-visible {
   display: block;
 }
 
+.source-preview {
+  position: absolute;
+  z-index: 3;
+  bottom: 20px;
+  left: 22px;
+  width: min(330px, calc(100% - 44px));
+  overflow: hidden;
+  border: 1px solid rgba(227, 180, 91, 0.5);
+  background: rgba(7, 11, 10, 0.9);
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.42);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(12px);
+  visibility: hidden;
+  transition:
+    opacity 280ms ease,
+    transform 280ms ease,
+    visibility 280ms ease;
+}
+
+.source-preview.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.source-preview video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: block;
+  background: #030504;
+  object-fit: cover;
+}
+
+.source-preview p {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 10px;
+  color: #777f78;
+  font-size: 7px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.source-preview strong {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.source-preview span {
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stage-intro {
   position: absolute;
   z-index: 3;
@@ -503,6 +562,13 @@ button:focus-visible {
     height: 620px;
   }
 
+  .source-preview {
+    top: 14px;
+    bottom: auto;
+    left: 14px;
+    width: min(280px, calc(100% - 28px));
+  }
+
   .stage-readout {
     top: auto;
     right: 14px;
@@ -547,8 +613,7 @@ button:focus-visible {
     min-height: 88px;
   }
 
-  .brand-mark,
-  .header-actions .text-button:last-child {
+  .brand-mark {
     display: none;
   }
 
@@ -559,6 +624,10 @@ button:focus-visible {
   .loom-stage {
     min-height: 620px;
     margin-top: 12px;
+  }
+
+  .source-preview {
+    width: min(240px, calc(100% - 28px));
   }
 
   .stage-intro {

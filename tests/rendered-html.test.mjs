@@ -31,6 +31,10 @@ test("server-renders the Flight Loom experience", async () => {
   assert.match(html, /<title>Flight Loom/);
   assert.match(html, /Weave the motion of flight/);
   assert.match(html, /Weave the sample flight/);
+  assert.match(html, /Recorded source drone flight/);
+  assert.match(html, /\/demo\/flight-loom-source\.mp4/);
+  assert.match(html, /\/demo\/flight-loom-source\.webm/);
+  assert.match(html, /Project-provided drone footage/);
   assert.match(html, /Local analysis/);
   assert.match(html, /The loom tray/);
   assert.doesNotMatch(html, /codex-preview/);

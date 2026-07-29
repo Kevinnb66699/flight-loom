@@ -13,6 +13,7 @@ import {
   FlightSegment,
   moveSegment,
   sampleFlight,
+  sampleFlightSource,
   toggleReverse,
 } from "../lib/flight-data";
 
@@ -266,7 +267,9 @@ function FlightCanvas({
       ref={canvasRef}
       className="loom-canvas"
       role="img"
-      aria-label="A generative tapestry woven from five drone-flight segments"
+      aria-label={`A generative tapestry woven from ${segments.length} drone-flight ${
+        segments.length === 1 ? "segment" : "segments"
+      }`}
     />
   );
 }
@@ -279,11 +282,14 @@ export function FlightLoom() {
   const [started, setStarted] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<number | null>(null);
-  const [sourceLabel, setSourceLabel] = useState("Curated sample flight");
+  const [sourceLabel, setSourceLabel] = useState(sampleFlightSource.label);
+  const [usingSample, setUsingSample] = useState(true);
+  const [followPlayback, setFollowPlayback] = useState(true);
   const [message, setMessage] = useState(
     "One flight. Five movements. Infinite weaves.",
   );
   const audioRef = useRef<AudioRig | null>(null);
+  const demoVideoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeIndex = Math.max(
@@ -321,6 +327,24 @@ export function FlightLoom() {
     [],
   );
 
+  const playSampleFlight = () => {
+    setSegments([...sampleFlight]);
+    setActiveId(sampleFlight[0].id);
+    setSourceLabel(sampleFlightSource.label);
+    setUsingSample(true);
+    setFollowPlayback(true);
+    setStarted(true);
+    setMessage("The recorded flight is becoming thread in real time.");
+
+    const video = demoVideoRef.current;
+    if (video) {
+      video.currentTime = 0;
+      void video.play().catch(() => {
+        setMessage("The weave is ready. Press play on the source flight.");
+      });
+    }
+  };
+
   const enableSound = async () => {
     if (audioRef.current) {
       await audioRef.current.context.close();
@@ -346,6 +370,9 @@ export function FlightLoom() {
     audioRef.current = { context, master, oscillators };
     setSoundOn(true);
     setStarted(true);
+    if (usingSample) {
+      void demoVideoRef.current?.play();
+    }
   };
 
   const moveActive = (direction: -1 | 1) => {
@@ -357,11 +384,13 @@ export function FlightLoom() {
     setSegments((current) =>
       moveSegment(current, activeIndex, destination),
     );
+    setFollowPlayback(false);
     setMessage("The seam moved. The flight now tells a different story.");
   };
 
   const reverseActive = () => {
     setSegments((current) => toggleReverse(current, activeId));
+    setFollowPlayback(false);
     setStarted(true);
     setMessage(
       activeSegment.reversed
@@ -372,15 +401,23 @@ export function FlightLoom() {
 
   const loopActive = () => {
     setSegments((current) => cycleRepeats(current, activeId));
+    setFollowPlayback(false);
     setStarted(true);
     setMessage("Repetition thickens the cloth and deepens its voice.");
   };
 
   const resetFlight = () => {
+    const video = demoVideoRef.current;
+    if (video) {
+      video.pause();
+      video.currentTime = 0;
+    }
     setSegments([...sampleFlight]);
     setActiveId(sampleFlight[0].id);
     setStarted(false);
-    setSourceLabel("Curated sample flight");
+    setSourceLabel(sampleFlightSource.label);
+    setUsingSample(true);
+    setFollowPlayback(true);
     setMessage("One flight. Five movements. Infinite weaves.");
   };
 
@@ -393,9 +430,12 @@ export function FlightLoom() {
     try {
       const { analyzeVideoFile } = await import("../lib/analyze-video");
       const analyzed = await analyzeVideoFile(file, setAnalysisProgress);
+      demoVideoRef.current?.pause();
       setSegments(analyzed);
       setActiveId(analyzed[0].id);
       setSourceLabel(file.name);
+      setUsingSample(false);
+      setFollowPlayback(false);
       setStarted(true);
       setMessage(
         "The clip is now cloth. Select a movement to reshape its future.",
@@ -458,7 +498,7 @@ export function FlightLoom() {
               <button
                 className="primary-button"
                 type="button"
-                onClick={() => setStarted(true)}
+                onClick={playSampleFlight}
               >
                 Weave the sample flight
               </button>
@@ -472,6 +512,51 @@ export function FlightLoom() {
             </div>
           </div>
         )}
+
+        <div
+          className={`source-preview ${
+            started && usingSample ? "is-visible" : ""
+          }`}
+          aria-hidden={!started || !usingSample}
+        >
+          <video
+            ref={demoVideoRef}
+            poster={sampleFlightSource.posterSrc}
+            muted
+            playsInline
+            controls
+            preload="metadata"
+            aria-label="Recorded source drone flight"
+            onPlay={() => setStarted(true)}
+            onTimeUpdate={(event) => {
+              if (!followPlayback) return;
+
+              const time = Math.min(
+                event.currentTarget.currentTime,
+                sampleFlightSource.duration - 0.001,
+              );
+              let elapsed = 0;
+              const movement =
+                sampleFlight.find((segment) => {
+                  elapsed += segment.duration;
+                  return time < elapsed;
+                }) ?? sampleFlight[sampleFlight.length - 1];
+
+              if (movement && movement.id !== activeId) {
+                setActiveId(movement.id);
+              }
+            }}
+          >
+            <source src={sampleFlightSource.webmSrc} type="video/webm" />
+            <source src={sampleFlightSource.videoSrc} type="video/mp4" />
+          </video>
+          <p>
+            <strong>Recorded source</strong>
+            <span>
+              {sampleFlightSource.credit} · {sampleFlightSource.duration}s
+            </span>
+          </p>
+        </div>
 
         <div className="stage-readout">
           <div>
@@ -500,10 +585,10 @@ export function FlightLoom() {
             </p>
           </div>
           <div className="mapping-legend" aria-label="Artwork mapping">
-            <span>Flow → angle</span>
-            <span>Speed → density</span>
+            <span>Visual drift → angle</span>
+            <span>Frame change → density</span>
             <span>Color → thread</span>
-            <span>Turn → curvature</span>
+            <span>Drift bend → curvature</span>
           </div>
         </div>
 
@@ -517,7 +602,11 @@ export function FlightLoom() {
               type="button"
               onClick={() => {
                 setActiveId(segment.id);
+                setFollowPlayback(false);
                 setStarted(true);
+                if (usingSample) {
+                  void demoVideoRef.current?.play();
+                }
               }}
               style={
                 {
@@ -589,6 +678,8 @@ export function FlightLoom() {
             className="visually-hidden"
             type="file"
             accept="video/mp4,video/quicktime,video/webm"
+            tabIndex={-1}
+            aria-hidden="true"
             onChange={analyzeFile}
           />
         </div>

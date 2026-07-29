@@ -12,16 +12,17 @@ The audience can:
 
 ## Current MVP
 
-- A deterministic five-movement sample flight that works without a network.
+- A 32.5-second recorded source flight with five precomputed movements.
 - A Canvas 2D generative textile renderer.
 - A lightweight Web Audio soundscape, enabled by the viewer.
 - Local browser analysis for MP4, MOV, or WebM files.
 - No upload: selected footage remains on the viewer's device.
 
-The local analyzer samples 24–32 frames and derives average color, frame
-difference, and luminance-centroid drift. The drift is an expressive motion
-approximation for the artwork, not precise optical flow, flight telemetry, or a
-scientific measurement.
+The bundled demo uses 27 low-resolution frame samples. User-selected clips use
+24–32 samples in the browser. Both paths derive color, frame difference, and
+luminance-centroid drift. The drift is an expressive motion approximation for
+the artwork, not precise optical flow, flight telemetry, or a scientific
+measurement.
 
 ## Architecture
 
@@ -55,8 +56,17 @@ npm run lint
 
 ## Source and media
 
-The repository contains no private or third-party drone footage. Demo footage
-must be self-recorded or accompanied by clear permission and attribution.
+The bundled demo is a derived excerpt from project-provided drone footage,
+included with the creator's authorization. The kept source range is 17.5–50.0
+seconds from the selected flight. It passed the project's severe-shake scan
+with no excluded intervals.
 
-This project was started for Hack the Arts 2026. Any pre-existing tools or
-media reused in the final submission will be listed here before submission.
+For browser delivery, the excerpt was converted from 4K/59.94 fps HEVC to
+720p/30 fps H.264, with a VP9/WebM fallback and no audio. Source metadata,
+chapters, DJI data streams, and telemetry are not present in either derived
+video. The original footage remains outside this repository and was not
+modified.
+
+This project was started for Hack the Arts 2026. The footage predates this
+repository; the Flight Loom analysis, interaction, artwork, and web experience
+were created for the project.
