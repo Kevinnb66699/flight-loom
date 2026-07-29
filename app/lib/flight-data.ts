@@ -106,6 +106,26 @@ export function normalize(value: number, min: number, max: number): number {
   return Math.min(1, Math.max(0, (value - min) / (max - min)));
 }
 
+export function findSegmentAtTime(
+  segments: readonly FlightSegment[],
+  time: number,
+) {
+  if (segments.length === 0) return null;
+
+  const safeTime = Math.max(0, Number.isFinite(time) ? time : 0);
+  let elapsed = 0;
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    elapsed += Math.max(0.1, segment.duration);
+    if (safeTime < elapsed || index === segments.length - 1) {
+      return { segment, index };
+    }
+  }
+
+  return null;
+}
+
 export function moveSegment(
   segments: readonly FlightSegment[],
   fromIndex: number,

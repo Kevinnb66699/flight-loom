@@ -11,6 +11,7 @@ import {
 import {
   cycleRepeats,
   deriveOverallMood,
+  findSegmentAtTime,
   FlightSegment,
   moveSegment,
   sampleFlight,
@@ -410,7 +411,7 @@ export function FlightLoom() {
   const [sourceSegments, setSourceSegments] = useState<FlightSegment[]>([
     ...sampleFlight,
   ]);
-  const [activeId, setActiveId] = useState(sampleFlight[0].id);
+  const [selectedBandId, setSelectedBandId] = useState(sampleFlight[0].id);
   const [started, setStarted] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<number | null>(null);
@@ -433,11 +434,19 @@ export function FlightLoom() {
   const pendingAudioContextRef = useRef<AudioContext | null>(null);
   const mountedRef = useRef(true);
 
-  const activeIndex = Math.max(
+  const selectedIndex = Math.max(
     0,
-    segments.findIndex(({ id }) => id === activeId),
+    segments.findIndex(({ id }) => id === selectedBandId),
   );
-  const activeSegment = segments[activeIndex] ?? segments[0];
+  const selectedSegment = segments[selectedIndex] ?? segments[0];
+  const sourceActivePosition = useMemo(
+    () => findSegmentAtTime(sourceSegments, playhead),
+    [playhead, sourceSegments],
+  );
+  const sourceActiveIndex = sourceActivePosition?.index ?? 0;
+  const sourceActiveSegment =
+    sourceActivePosition?.segment ?? sourceSegments[0];
+  const sourceActiveId = sourceActiveSegment?.id ?? "";
   const mood = useMemo(() => deriveOverallMood(segments), [segments]);
   const totalDuration = useMemo(
     () =>
@@ -448,11 +457,12 @@ export function FlightLoom() {
     [sourceSegments],
   );
   const playheadPercent = clamp(playhead / Math.max(0.001, totalDuration)) * 100;
-  const threadCount = activeSegment
-    ? Math.round(10 + activeSegment.energy * 20)
+  const threadCount = sourceActiveSegment
+    ? Math.round(10 + sourceActiveSegment.energy * 20)
     : 0;
-  const driftAngle = activeSegment
-    ? (Math.atan2(-activeSegment.lift, activeSegment.turn) * 180) / Math.PI
+  const driftAngle = sourceActiveSegment
+    ? (Math.atan2(-sourceActiveSegment.lift, sourceActiveSegment.turn) * 180) /
+      Math.PI
     : 0;
   const hasViewerEdits = useMemo(
     () => JSON.stringify(segments) !== JSON.stringify(sourceSegments),
@@ -460,6 +470,7 @@ export function FlightLoom() {
   );
   const revealProgress =
     followPlayback && !hasViewerEdits ? playheadPercent / 100 : started ? 1 : 0;
+  const canvasActiveId = sourceActiveId || selectedBandId;
 
   useEffect(
     () => () => {
@@ -492,7 +503,7 @@ export function FlightLoom() {
     setAnalysisProgress(null);
     setSegments([...sampleFlight]);
     setSourceSegments([...sampleFlight]);
-    setActiveId(sampleFlight[0].id);
+    setSelectedBandId(sampleFlight[0].id);
     setSourceLabel(sampleFlightSource.label);
     setUsingSample(true);
     setFollowPlayback(true);
@@ -548,6 +559,9 @@ export function FlightLoom() {
       if (typeof AudioContext === "undefined") {
         throw new Error("Web Audio is not supported in this browser.");
       }
+      if (!sourceActiveSegment) {
+        throw new Error("No flight movement is available to sonify.");
+      }
 
       pendingContext = new AudioContext();
       pendingAudioContextRef.current = pendingContext;
@@ -561,8 +575,8 @@ export function FlightLoom() {
       pendingRig = createFlightAudioRig(pendingContext);
       audioRef.current = pendingRig;
       pendingAudioContextRef.current = null;
-      updateFlightAmbient(pendingRig, activeSegment);
-      playFlightNote(pendingRig, activeSegment, activeIndex);
+      updateFlightAmbient(pendingRig, sourceActiveSegment);
+      playFlightNote(pendingRig, sourceActiveSegment, sourceActiveIndex);
       lastSoundTimeRef.current = playhead;
       setSoundOn(true);
       setStarted(true);
@@ -605,7 +619,7 @@ export function FlightLoom() {
 
   const previewSegmentSound = (
     segment: FlightSegment,
-    segmentIndex = activeIndex,
+    segmentIndex = selectedIndex,
   ) => {
     const rig = audioRef.current;
     if (!rig) return;
@@ -620,23 +634,23 @@ export function FlightLoom() {
 
   const moveActive = (direction: -1 | 1) => {
     const destination = clamp(
-      activeIndex + direction,
+      selectedIndex + direction,
       0,
       segments.length - 1,
     );
     setSegments((current) =>
-      moveSegment(current, activeIndex, destination),
+      moveSegment(current, selectedIndex, destination),
     );
     setFollowPlayback(false);
     setMessage("Viewer edit: the selected band moved in the final textile.");
   };
 
   const reverseActive = () => {
-    setSegments((current) => toggleReverse(current, activeId));
-    if (activeSegment) {
+    setSegments((current) => toggleReverse(current, selectedBandId));
+    if (selectedSegment) {
       previewSegmentSound(
-        { ...activeSegment, reversed: !activeSegment.reversed },
-        activeIndex,
+        { ...selectedSegment, reversed: !selectedSegment.reversed },
+        selectedIndex,
       );
     }
     setFollowPlayback(false);
@@ -645,15 +659,15 @@ export function FlightLoom() {
   };
 
   const loopActive = () => {
-    setSegments((current) => cycleRepeats(current, activeId));
-    if (activeSegment) {
+    setSegments((current) => cycleRepeats(current, selectedBandId));
+    if (selectedSegment) {
       previewSegmentSound(
         {
-          ...activeSegment,
+          ...selectedSegment,
           repeats:
-            activeSegment.repeats >= 3 ? 1 : activeSegment.repeats + 1,
+            selectedSegment.repeats >= 3 ? 1 : selectedSegment.repeats + 1,
         },
-        activeIndex,
+        selectedIndex,
       );
     }
     setFollowPlayback(false);
@@ -671,7 +685,7 @@ export function FlightLoom() {
     }
     setSegments([...sampleFlight]);
     setSourceSegments([...sampleFlight]);
-    setActiveId(sampleFlight[0].id);
+    setSelectedBandId(sampleFlight[0].id);
     setStarted(false);
     setSourceLabel(sampleFlightSource.label);
     setUsingSample(true);
@@ -705,7 +719,7 @@ export function FlightLoom() {
       demoVideoRef.current?.pause();
       setSegments(analyzed);
       setSourceSegments(analyzed);
-      setActiveId(analyzed[0].id);
+      setSelectedBandId(analyzed[0].id);
       setSourceLabel(file.name);
       setCustomVideoUrl(URL.createObjectURL(file));
       setUsingSample(false);
@@ -739,7 +753,7 @@ export function FlightLoom() {
   };
 
   const focusSegment = (segment: FlightSegment) => {
-    setActiveId(segment.id);
+    setSelectedBandId(segment.id);
     setFollowPlayback(false);
     setStarted(true);
 
@@ -768,6 +782,9 @@ export function FlightLoom() {
 
   const resumeSource = () => {
     setFollowPlayback(true);
+    if (sourceActiveId) {
+      setSelectedBandId(sourceActiveId);
+    }
     setStarted(true);
     setMessage("Following the original source timing again.");
     if (audioRef.current) {
@@ -785,14 +802,9 @@ export function FlightLoom() {
     );
     setPlayhead(time);
 
-    let elapsed = 0;
-    const movementIndex = sourceSegments.findIndex((segment) => {
-        elapsed += segment.duration;
-        return time < elapsed;
-      });
-    const safeMovementIndex =
-      movementIndex >= 0 ? movementIndex : sourceSegments.length - 1;
-    const movement = sourceSegments[safeMovementIndex];
+    const sourcePosition = findSegmentAtTime(sourceSegments, time);
+    const movement = sourcePosition?.segment;
+    const safeMovementIndex = sourcePosition?.index ?? 0;
 
     const rig = audioRef.current;
     if (rig && movement) {
@@ -817,10 +829,26 @@ export function FlightLoom() {
       }
     }
 
-    if (!followPlayback) return;
+    if (followPlayback && movement && movement.id !== selectedBandId) {
+      setSelectedBandId(movement.id);
+    }
+  };
 
-    if (movement && movement.id !== activeId) {
-      setActiveId(movement.id);
+  const handleSeeked = (event: React.SyntheticEvent<HTMLVideoElement>) => {
+    const time = Math.min(
+      event.currentTarget.currentTime,
+      Math.max(0, totalDuration - 0.001),
+    );
+    const sourcePosition = findSegmentAtTime(sourceSegments, time);
+    if (!sourcePosition) return;
+
+    setPlayhead(time);
+    if (followPlayback) {
+      setSelectedBandId(sourcePosition.segment.id);
+    } else {
+      setMessage(
+        `Source preview: "${sourcePosition.segment.label}". Editing remains on "${selectedSegment?.label ?? "the selected band"}".`,
+      );
     }
   };
 
@@ -957,6 +985,7 @@ export function FlightLoom() {
                   stopFlightNotes(audioRef.current);
                 }}
                 onTimeUpdate={handleTimeUpdate}
+                onSeeked={handleSeeked}
                 onEnded={() => {
                   hushFlightAmbient(audioRef.current);
                   stopFlightNotes(audioRef.current);
@@ -1007,11 +1036,13 @@ export function FlightLoom() {
               <span className="step-number">02</span>
               <div>
                 <p>MOTION SAMPLE</p>
-                <strong>{activeSegment?.label ?? "Waiting for video"}</strong>
+                <strong>
+                  {sourceActiveSegment?.label ?? "Waiting for video"}
+                </strong>
               </div>
             </div>
 
-            {activeSegment && (
+            {sourceActiveSegment && (
               <>
                 <div className="drift-field">
                   <span>Screen drift</span>
@@ -1026,36 +1057,36 @@ export function FlightLoom() {
                     />
                   </div>
                   <strong>
-                    {horizontalDriftLabel(activeSegment.turn)},{" "}
-                    {verticalDriftLabel(activeSegment.lift)}
+                    {horizontalDriftLabel(sourceActiveSegment.turn)},{" "}
+                    {verticalDriftLabel(sourceActiveSegment.lift)}
                   </strong>
                 </div>
 
                 <div className="metrics">
                   <MetricRow
                     label="Motion energy"
-                    value={`${Math.round(activeSegment.energy * 100)}%`}
-                    amount={activeSegment.energy}
+                    value={`${Math.round(sourceActiveSegment.energy * 100)}%`}
+                    amount={sourceActiveSegment.energy}
                     result={`becomes ${threadCount} moving threads`}
                   />
                   <MetricRow
                     label="Frame change"
-                    value={`${Math.round(activeSegment.sceneShift * 100)}%`}
-                    amount={activeSegment.sceneShift}
+                    value={`${Math.round(sourceActiveSegment.sceneShift * 100)}%`}
+                    amount={sourceActiveSegment.sceneShift}
                     result="adds warp variation"
                   />
                   <MetricRow
                     label="Horizontal drift"
-                    value={signedPercent(activeSegment.turn)}
-                    amount={activeSegment.turn}
-                    result={horizontalDriftLabel(activeSegment.turn)}
+                    value={signedPercent(sourceActiveSegment.turn)}
+                    amount={sourceActiveSegment.turn}
+                    result={horizontalDriftLabel(sourceActiveSegment.turn)}
                     signed
                   />
                   <MetricRow
                     label="Vertical drift"
-                    value={signedPercent(activeSegment.lift)}
-                    amount={activeSegment.lift}
-                    result={verticalDriftLabel(activeSegment.lift)}
+                    value={signedPercent(sourceActiveSegment.lift)}
+                    amount={sourceActiveSegment.lift}
+                    result={verticalDriftLabel(sourceActiveSegment.lift)}
                     signed
                   />
                 </div>
@@ -1063,7 +1094,7 @@ export function FlightLoom() {
                 <div className="palette-readout">
                   <span>Sampled colors become thread</span>
                   <div>
-                    {activeSegment.palette.map((color) => (
+                    {sourceActiveSegment.palette.map((color) => (
                       <i
                         key={color}
                         style={{ backgroundColor: color }}
@@ -1093,7 +1124,7 @@ export function FlightLoom() {
             <div className="canvas-shell">
               <FlightCanvas
                 segments={segments}
-                activeId={activeId}
+                activeId={canvasActiveId}
                 started={started}
                 revealProgress={revealProgress}
               />
@@ -1110,7 +1141,9 @@ export function FlightLoom() {
             <div className="output-caption">
               <span>{mood}</span>
               <span>
-                Gold shuttle = current source position
+                {followPlayback && !hasViewerEdits
+                  ? "Gold shuttle = current source position"
+                  : "Bright band = current source preview"}
               </span>
             </div>
           </article>
@@ -1144,15 +1177,19 @@ export function FlightLoom() {
             </div>
           ) : (
             <p className="remix-order-note">
-              Cards now show your artwork order. Source timing remains on the
-              video above.
+              Cards show your artwork order. Gold dot = source preview;
+              outlined card = band being edited.
             </p>
           )}
           <div className="segment-row">
             {segments.map((segment, index) => (
               <button
-                className={`segment-card ${
-                  segment.id === activeId ? "is-active" : ""
+                className={`segment-card${
+                  segment.id === selectedBandId ? " is-active" : ""
+                }${
+                  segment.id === sourceActiveId
+                    ? " is-source-current"
+                    : ""
                 }`}
                 key={segment.id}
                 type="button"
@@ -1164,8 +1201,12 @@ export function FlightLoom() {
                     "--swatch-c": segment.palette[2],
                   } as CSSProperties
                 }
-                aria-pressed={segment.id === activeId}
+                aria-current={
+                  segment.id === sourceActiveId ? "true" : undefined
+                }
+                aria-pressed={segment.id === selectedBandId}
               >
+                <span className="source-now-dot" aria-hidden="true" />
                 <span className="segment-index">
                   {String(index + 1).padStart(2, "0")}
                 </span>
@@ -1185,33 +1226,35 @@ export function FlightLoom() {
         <div className="edit-bar">
           <div className="edit-label">
             <span>Viewer edits</span>
-            <strong>{activeSegment?.label}</strong>
+            <strong>{selectedSegment?.label}</strong>
             <small>These controls change the artwork, not the source video.</small>
           </div>
           <div className="control-group">
             <button
               type="button"
               onClick={() => moveActive(-1)}
-              disabled={activeIndex === 0}
+              disabled={selectedIndex === 0}
             >
               Move earlier
             </button>
             <button
               type="button"
               onClick={() => moveActive(1)}
-              disabled={activeIndex === segments.length - 1}
+              disabled={selectedIndex === segments.length - 1}
             >
               Move later
             </button>
             <button
               type="button"
               onClick={reverseActive}
-              aria-pressed={activeSegment?.reversed}
+              aria-pressed={selectedSegment?.reversed}
             >
-              {activeSegment?.reversed ? "Restore direction" : "Reverse band"}
+              {selectedSegment?.reversed
+                ? "Restore direction"
+                : "Reverse band"}
             </button>
             <button type="button" onClick={loopActive}>
-              Repeat ×{activeSegment?.repeats ?? 1}
+              Repeat ×{selectedSegment?.repeats ?? 1}
             </button>
           </div>
           <button

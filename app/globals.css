@@ -771,6 +771,7 @@ button:disabled {
 }
 
 .segment-card {
+  position: relative;
   min-width: 0;
   padding: 10px;
   display: grid;
@@ -797,6 +798,26 @@ button:disabled {
   border-color: var(--gold-dark);
   background: var(--paper-soft);
   box-shadow: 0 10px 28px rgba(66, 46, 18, 0.08);
+}
+
+.source-now-dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gold-dark);
+  box-shadow: 0 0 0 3px rgba(157, 104, 29, 0.14);
+  opacity: 0;
+}
+
+.segment-card.is-source-current .source-now-dot {
+  opacity: 1;
+}
+
+.segment-card.is-source-current .segment-weave {
+  box-shadow: 0 0 0 2px rgba(157, 104, 29, 0.34);
 }
 
 .segment-index {

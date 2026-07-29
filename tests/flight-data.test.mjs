@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   cycleRepeats,
   deriveOverallMood,
+  findSegmentAtTime,
   moveSegment,
   normalize,
   reorderSegments,
@@ -45,6 +46,14 @@ test("moveSegment reorders without mutating its input", () => {
     [ids[1], ids[2], ids[3], ids[0], ids[4]],
   );
   assert.deepEqual(original, sampleFlight);
+});
+
+test("findSegmentAtTime maps seeks to the original source movement", () => {
+  assert.equal(findSegmentAtTime(sampleFlight, 0)?.index, 0);
+  assert.equal(findSegmentAtTime(sampleFlight, 6.49)?.index, 0);
+  assert.equal(findSegmentAtTime(sampleFlight, 6.5)?.index, 1);
+  assert.equal(findSegmentAtTime(sampleFlight, 32.5)?.index, 4);
+  assert.equal(findSegmentAtTime([], 0), null);
 });
 
 test("reorderSegments moves by stable segment ids", () => {
