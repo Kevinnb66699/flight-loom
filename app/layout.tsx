@@ -13,9 +13,36 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Flight Loom",
+  metadataBase: new URL("https://flight-loom.vercel.app"),
+  title: {
+    default: "Flight Loom",
+    template: "%s",
+  },
   description:
-    "Turn the motion of a drone flight into a living audiovisual tapestry.",
+    "Turn the visible motion and colors of a drone flight into a living digital textile.",
+  openGraph: {
+    title: "Flight Loom — Every flight leaves a hidden textile",
+    description:
+      "Play a drone flight, see its motion sampled, and watch it become interactive digital art.",
+    url: "https://flight-loom.vercel.app",
+    siteName: "Flight Loom",
+    images: [
+      {
+        url: "/og.png",
+        width: 1730,
+        height: 909,
+        alt: "A drone flight becoming a woven digital textile",
+      },
+    ],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Flight Loom — Every flight leaves a hidden textile",
+    description:
+      "Play a drone flight, see its motion sampled, and watch it become interactive digital art.",
+    images: ["/og.png"],
+  },
 };
 
 export default function RootLayout({

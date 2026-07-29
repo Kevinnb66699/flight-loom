@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { FlightLoom } from "./components/FlightLoom";
 
 export const metadata: Metadata = {
-  title: "Flight Loom — Weave motion into art",
+  title: "Flight Loom — Turn drone video into interactive art",
   description:
-    "An interactive audiovisual tapestry woven from the motion and color of drone flight.",
+    "See how a drone video's visible motion and colors become a living digital textile you can remix.",
 };
 
 export default function Home() {

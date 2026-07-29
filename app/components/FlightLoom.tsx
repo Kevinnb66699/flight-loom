@@ -2,6 +2,7 @@
 
 import {
   ChangeEvent,
+  CSSProperties,
   useEffect,
   useMemo,
   useRef,
@@ -26,16 +27,45 @@ type AudioRig = {
 const clamp = (value: number, min = 0, max = 1) =>
   Math.min(max, Math.max(min, value));
 
+const signedPercent = (value: number) =>
+  `${value >= 0 ? "+" : ""}${Math.round(value * 100)}%`;
+
+const formatTime = (seconds: number) => {
+  const safeSeconds = Math.max(0, seconds);
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = Math.floor(safeSeconds % 60);
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+};
+
+const horizontalDriftLabel = (value: number) => {
+  if (value < -0.08) return "leftward curve";
+  if (value > 0.08) return "rightward curve";
+  return "nearly straight";
+};
+
+const verticalDriftLabel = (value: number) => {
+  if (value < -0.08) return "downward pull";
+  if (value > 0.08) return "upward pull";
+  return "level pull";
+};
+
 function FlightCanvas({
   segments,
   activeId,
   started,
+  revealProgress,
 }: {
   segments: readonly FlightSegment[];
   activeId: string;
   started: boolean;
+  revealProgress: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const revealProgressRef = useRef(revealProgress);
+
+  useEffect(() => {
+    revealProgressRef.current = revealProgress;
+  }, [revealProgress]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -48,6 +78,7 @@ function FlightCanvas({
     let animationFrame = 0;
     let width = 0;
     let height = 0;
+    let hasDrawn = false;
     const reduceMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
@@ -60,201 +91,233 @@ function FlightCanvas({
       canvas.width = Math.floor(width * pixelRatio);
       canvas.height = Math.floor(height * pixelRatio);
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      if (reduceMotion && hasDrawn) {
+        cancelAnimationFrame(animationFrame);
+        animationFrame = requestAnimationFrame(draw);
+      }
     };
 
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
-    resize();
-
     const draw = () => {
-      frame += reduceMotion ? 0.08 : 1;
+      hasDrawn = true;
+      frame += reduceMotion ? 0 : 1;
       context.clearRect(0, 0, width, height);
 
       const background = context.createRadialGradient(
-        width * 0.48,
-        height * 0.45,
-        10,
-        width * 0.48,
-        height * 0.45,
-        Math.max(width, height) * 0.72,
+        width * 0.5,
+        height * 0.42,
+        20,
+        width * 0.5,
+        height * 0.42,
+        Math.max(width, height) * 0.78,
       );
-      background.addColorStop(0, "#18211e");
-      background.addColorStop(0.42, "#0e1514");
-      background.addColorStop(1, "#070b0a");
+      background.addColorStop(0, "#17201d");
+      background.addColorStop(0.48, "#0d1312");
+      background.addColorStop(1, "#070a09");
       context.fillStyle = background;
       context.fillRect(0, 0, width, height);
 
-      context.strokeStyle = "rgba(239, 226, 199, 0.045)";
+      context.strokeStyle = "rgba(239, 226, 199, 0.04)";
       context.lineWidth = 1;
-      for (let x = 18; x < width; x += 24) {
+      for (let x = 16; x < width; x += 22) {
         context.beginPath();
         context.moveTo(x, 0);
         context.lineTo(x, height);
         context.stroke();
       }
 
-      if (!started) {
-        context.strokeStyle = "rgba(227, 180, 91, 0.22)";
-        for (let row = 0; row < 18; row += 1) {
-          const y = height * 0.2 + row * (height * 0.032);
-          context.beginPath();
-          context.moveTo(width * 0.12, y);
-          context.bezierCurveTo(
-            width * 0.36,
-            y - 8,
-            width * 0.63,
-            y + 8,
-            width * 0.88,
-            y,
-          );
-          context.stroke();
+      if (segments.length === 0) {
+        if (!reduceMotion) {
+          animationFrame = requestAnimationFrame(draw);
         }
-        animationFrame = requestAnimationFrame(draw);
         return;
       }
 
-      const sidePadding = Math.max(18, width * 0.035);
-      const topPadding = Math.max(34, height * 0.12);
-      const usableWidth = width - sidePadding * 2;
-      const usableHeight = height - topPadding * 1.8;
-      const gap = Math.max(6, usableWidth * 0.009);
-      const segmentWidth =
-        (usableWidth - gap * Math.max(0, segments.length - 1)) /
-        Math.max(1, segments.length);
+      const left = Math.max(20, width * 0.045);
+      const top = Math.max(54, height * 0.12);
+      const clothWidth = width - left * 2;
+      const clothHeight = height - top - Math.max(52, height * 0.13);
+      const totalDuration = segments.reduce(
+        (total, segment) => total + Math.max(0.1, segment.duration),
+        0,
+      );
+      const time = frame * 0.007;
+      let elapsed = 0;
 
-      segments.forEach((segment, segmentIndex) => {
-        const xStart = sidePadding + segmentIndex * (segmentWidth + gap);
-        const xEnd = xStart + segmentWidth;
+      context.fillStyle = "rgba(239, 226, 199, 0.025)";
+      context.fillRect(left, top, clothWidth, clothHeight);
+
+      const bands = segments.map((segment) => {
+        const startRatio = elapsed / totalDuration;
+        elapsed += Math.max(0.1, segment.duration);
+        const endRatio = elapsed / totalDuration;
+        return {
+          segment,
+          xStart: left + startRatio * clothWidth,
+          xEnd: left + endRatio * clothWidth,
+        };
+      });
+
+      bands.forEach(({ segment, xStart, xEnd }, segmentIndex) => {
+        const bandWidth = xEnd - xStart;
         const active = segment.id === activeId;
         const direction = segment.reversed ? -1 : 1;
         const density = Math.round(10 + segment.energy * 20);
-        const bend = segment.turn * segmentWidth * 0.18;
-        const lift = segment.lift * usableHeight * 0.11;
-        const time = frame * 0.006 * direction;
+        const bend = segment.turn * bandWidth * 0.34;
+        const lift = segment.lift * clothHeight * 0.2;
+
+        const wash = context.createLinearGradient(xStart, top, xEnd, top);
+        wash.addColorStop(0, `${segment.palette[0]}24`);
+        wash.addColorStop(0.5, `${segment.palette[1]}38`);
+        wash.addColorStop(1, `${segment.palette[2]}24`);
+        context.fillStyle = wash;
+        context.fillRect(xStart, top, bandWidth, clothHeight);
 
         context.save();
         context.beginPath();
-        context.rect(xStart, topPadding, segmentWidth, usableHeight);
+        context.rect(xStart, top, bandWidth, clothHeight);
         context.clip();
         context.globalCompositeOperation = "screen";
 
         for (let repeat = 0; repeat < segment.repeats; repeat += 1) {
-          const repeatOffset = repeat * 3.2;
-
+          const repeatOffset = repeat * 3;
           for (let thread = 0; thread < density; thread += 1) {
             const ratio = thread / Math.max(1, density - 1);
-            const y =
-              topPadding +
-              ratio * usableHeight +
-              Math.sin(time * 2 + thread * 0.43 + segmentIndex) *
-                (1.5 + segment.energy * 4) +
-              repeatOffset;
-            const color =
-              segment.palette[(thread + repeat) % segment.palette.length];
+            const pulse =
+              Math.sin(
+                time * 1.8 * direction + thread * 0.42 + segmentIndex,
+              ) *
+              (1.5 + segment.energy * 4);
+            const y = top + ratio * clothHeight + pulse + repeatOffset;
 
             context.beginPath();
-            context.moveTo(xStart - 4, y + lift * 0.2);
+            context.moveTo(xStart - 2, y + lift * 0.15);
             context.bezierCurveTo(
-              xStart + segmentWidth * 0.28,
+              xStart + bandWidth * 0.28,
               y - bend + lift,
-              xStart + segmentWidth * 0.72,
+              xStart + bandWidth * 0.72,
               y + bend - lift,
-              xEnd + 4,
-              y - lift * 0.2,
-            );
-            context.strokeStyle = color;
-            context.globalAlpha =
-              0.2 + segment.energy * 0.28 + repeat * 0.055;
-            context.lineWidth = active ? 1.35 : 0.9;
-            context.stroke();
-          }
-
-          const warpCount = Math.max(6, Math.round(segmentWidth / 13));
-          for (let warp = 0; warp < warpCount; warp += 1) {
-            const ratio = warp / Math.max(1, warpCount - 1);
-            const x =
-              xStart +
-              ratio * segmentWidth +
-              Math.sin(time + warp * 0.62) * (1 + segment.sceneShift * 3);
-            context.beginPath();
-            context.moveTo(x, topPadding - 3);
-            context.bezierCurveTo(
-              x + bend * 0.12,
-              topPadding + usableHeight * 0.35,
-              x - bend * 0.12,
-              topPadding + usableHeight * 0.7,
-              x,
-              topPadding + usableHeight + 3,
+              xEnd + 2,
+              y - lift * 0.15,
             );
             context.strokeStyle =
-              segment.palette[(warp + 1) % segment.palette.length];
-            context.globalAlpha = 0.12 + repeat * 0.045;
-            context.lineWidth = 0.75;
+              segment.palette[(thread + repeat) % segment.palette.length];
+            context.globalAlpha =
+              0.25 + segment.energy * 0.32 + repeat * 0.05;
+            context.lineWidth = active ? 1.3 : 0.9;
             context.stroke();
           }
         }
 
         if (segment.reversed) {
+          const unravel = context.createLinearGradient(xStart, 0, xEnd, 0);
+          unravel.addColorStop(0, "rgba(7, 10, 9, 0.04)");
+          unravel.addColorStop(0.7, "rgba(7, 10, 9, 0.4)");
+          unravel.addColorStop(1, "rgba(7, 10, 9, 0.88)");
           context.globalCompositeOperation = "source-over";
-          const unravel = context.createLinearGradient(
-            xStart,
-            0,
-            xEnd,
-            0,
-          );
-          unravel.addColorStop(0, "rgba(7, 11, 10, 0.05)");
-          unravel.addColorStop(0.72, "rgba(7, 11, 10, 0.42)");
-          unravel.addColorStop(1, "rgba(7, 11, 10, 0.92)");
-          context.fillStyle = unravel;
           context.globalAlpha = 1;
-          context.fillRect(xStart, topPadding, segmentWidth, usableHeight);
+          context.fillStyle = unravel;
+          context.fillRect(xStart, top, bandWidth, clothHeight);
         }
 
         context.restore();
 
         context.strokeStyle = active
-          ? "rgba(227, 180, 91, 0.82)"
+          ? "rgba(239, 190, 92, 0.82)"
           : "rgba(239, 226, 199, 0.13)";
-        context.lineWidth = active ? 1.4 : 1;
-        context.strokeRect(xStart, topPadding, segmentWidth, usableHeight);
+        context.lineWidth = active ? 1.5 : 1;
+        context.strokeRect(xStart, top, bandWidth, clothHeight);
 
         context.fillStyle = active
-          ? "rgba(239, 226, 199, 0.86)"
-          : "rgba(239, 226, 199, 0.42)";
+          ? "rgba(239, 226, 199, 0.92)"
+          : "rgba(239, 226, 199, 0.46)";
         context.font = "10px ui-monospace, SFMono-Regular, monospace";
         context.fillText(
-          `${String(segmentIndex + 1).padStart(2, "0")} · ${segment.label.toUpperCase()}`,
-          xStart,
-          topPadding + usableHeight + 24,
-          segmentWidth,
+          String(segmentIndex + 1).padStart(2, "0"),
+          xStart + 7,
+          top - 13,
         );
       });
 
-      const activeIndex = Math.max(
-        0,
-        segments.findIndex(({ id }) => id === activeId),
-      );
-      const shuttleRegion =
-        sidePadding + activeIndex * (segmentWidth + gap) + segmentWidth / 2;
-      const shuttleY =
-        topPadding +
-        usableHeight *
-          (0.5 + Math.sin(frame * 0.018) * (reduceMotion ? 0.04 : 0.36));
-      context.fillStyle = "#e3b45b";
-      context.shadowColor = "rgba(227, 180, 91, 0.8)";
-      context.shadowBlur = 14;
-      context.beginPath();
-      context.moveTo(shuttleRegion - 7, shuttleY);
-      context.lineTo(shuttleRegion, shuttleY - 4);
-      context.lineTo(shuttleRegion + 7, shuttleY);
-      context.lineTo(shuttleRegion, shuttleY + 4);
-      context.closePath();
-      context.fill();
-      context.shadowBlur = 0;
+      const warpCount = Math.max(18, Math.round(clothWidth / 13));
+      for (let warp = 0; warp < warpCount; warp += 1) {
+        const ratio = warp / Math.max(1, warpCount - 1);
+        const x = left + ratio * clothWidth;
+        const band =
+          bands.find(({ xStart, xEnd }) => x >= xStart && x <= xEnd) ??
+          bands[bands.length - 1];
+        const wave =
+          Math.sin(time + warp * 0.58) *
+          (1 + band.segment.sceneShift * 3.2);
+        context.beginPath();
+        context.moveTo(x + wave, top);
+        context.bezierCurveTo(
+          x - wave,
+          top + clothHeight * 0.33,
+          x + wave,
+          top + clothHeight * 0.67,
+          x - wave,
+          top + clothHeight,
+        );
+        context.strokeStyle =
+          band.segment.palette[(warp + 1) % band.segment.palette.length];
+        context.globalAlpha = 0.17;
+        context.lineWidth = 0.75;
+        context.stroke();
+      }
+      context.globalAlpha = 1;
 
-      animationFrame = requestAnimationFrame(draw);
+      const visibleRatio = started
+        ? clamp(revealProgressRef.current, 0.025, 1)
+        : 0.08;
+      const revealX = left + clothWidth * visibleRatio;
+
+      if (visibleRatio < 0.999) {
+        const futureMask = context.createLinearGradient(
+          revealX,
+          0,
+          Math.min(width, revealX + 68),
+          0,
+        );
+        futureMask.addColorStop(0, "rgba(7, 10, 9, 0.56)");
+        futureMask.addColorStop(1, "rgba(7, 10, 9, 0.92)");
+        context.fillStyle = futureMask;
+        context.fillRect(
+          revealX,
+          top - 1,
+          left + clothWidth - revealX + 1,
+          clothHeight + 2,
+        );
+
+        context.strokeStyle = "rgba(239, 190, 92, 0.88)";
+        context.shadowColor = "rgba(239, 190, 92, 0.55)";
+        context.shadowBlur = 12;
+        context.beginPath();
+        context.moveTo(revealX, top - 8);
+        context.lineTo(revealX, top + clothHeight + 8);
+        context.stroke();
+
+        context.fillStyle = "#efbe5c";
+        context.beginPath();
+        context.moveTo(revealX - 8, top + clothHeight * 0.5);
+        context.lineTo(revealX, top + clothHeight * 0.5 - 5);
+        context.lineTo(revealX + 8, top + clothHeight * 0.5);
+        context.lineTo(revealX, top + clothHeight * 0.5 + 5);
+        context.closePath();
+        context.fill();
+        context.shadowBlur = 0;
+      }
+
+      context.strokeStyle = "rgba(239, 226, 199, 0.18)";
+      context.strokeRect(left, top, clothWidth, clothHeight);
+
+      if (!reduceMotion) {
+        animationFrame = requestAnimationFrame(draw);
+      }
     };
 
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    resize();
     draw();
     return () => {
       cancelAnimationFrame(animationFrame);
@@ -267,15 +330,61 @@ function FlightCanvas({
       ref={canvasRef}
       className="loom-canvas"
       role="img"
-      aria-label={`A generative tapestry woven from ${segments.length} drone-flight ${
-        segments.length === 1 ? "segment" : "segments"
-      }`}
+      aria-label={`A digital textile woven from ${segments.length} flight movements`}
     />
+  );
+}
+
+function MetricRow({
+  label,
+  value,
+  amount,
+  result,
+  signed = false,
+}: {
+  label: string;
+  value: string;
+  amount: number;
+  result: string;
+  signed?: boolean;
+}) {
+  const metricLeft = signed
+    ? amount < 0
+      ? 50 - Math.abs(clamp(amount, -1, 1)) * 50
+      : 50
+    : 0;
+  const metricWidth = signed
+    ? Math.abs(clamp(amount, -1, 1)) * 50
+    : clamp(amount) * 100;
+
+  return (
+    <div className={`metric-row ${signed ? "is-signed" : ""}`}>
+      <div className="metric-heading">
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      <div className="metric-track" aria-hidden="true">
+        {signed && <span className="metric-zero" />}
+        <span
+          className="metric-fill"
+          style={
+            {
+              "--metric-left": `${metricLeft}%`,
+              "--metric-width": `${metricWidth}%`,
+            } as CSSProperties
+          }
+        />
+      </div>
+      <small>{result}</small>
+    </div>
   );
 }
 
 export function FlightLoom() {
   const [segments, setSegments] = useState<FlightSegment[]>([
+    ...sampleFlight,
+  ]);
+  const [sourceSegments, setSourceSegments] = useState<FlightSegment[]>([
     ...sampleFlight,
   ]);
   const [activeId, setActiveId] = useState(sampleFlight[0].id);
@@ -287,12 +396,15 @@ export function FlightLoom() {
   );
   const [usingSample, setUsingSample] = useState(true);
   const [followPlayback, setFollowPlayback] = useState(true);
+  const [playhead, setPlayhead] = useState(0);
+  const [customVideoUrl, setCustomVideoUrl] = useState<string | null>(null);
   const [message, setMessage] = useState(
-    "One flight. Five movements. Infinite weaves.",
+    "Press play to watch this flight become a textile.",
   );
   const audioRef = useRef<AudioRig | null>(null);
   const demoVideoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const analysisRunRef = useRef(0);
 
   const activeIndex = Math.max(
     0,
@@ -300,6 +412,36 @@ export function FlightLoom() {
   );
   const activeSegment = segments[activeIndex] ?? segments[0];
   const mood = useMemo(() => deriveOverallMood(segments), [segments]);
+  const totalDuration = useMemo(
+    () =>
+      sourceSegments.reduce(
+        (total, segment) => total + Math.max(0.1, segment.duration),
+        0,
+      ),
+    [sourceSegments],
+  );
+  const playheadPercent = clamp(playhead / Math.max(0.001, totalDuration)) * 100;
+  const threadCount = activeSegment
+    ? Math.round(10 + activeSegment.energy * 20)
+    : 0;
+  const driftAngle = activeSegment
+    ? (Math.atan2(-activeSegment.lift, activeSegment.turn) * 180) / Math.PI
+    : 0;
+  const hasViewerEdits = useMemo(
+    () => JSON.stringify(segments) !== JSON.stringify(sourceSegments),
+    [segments, sourceSegments],
+  );
+  const revealProgress =
+    followPlayback && !hasViewerEdits ? playheadPercent / 100 : started ? 1 : 0;
+
+  useEffect(
+    () => () => {
+      if (customVideoUrl) {
+        URL.revokeObjectURL(customVideoUrl);
+      }
+    },
+    [customVideoUrl],
+  );
 
   useEffect(() => {
     const rig = audioRef.current;
@@ -330,21 +472,31 @@ export function FlightLoom() {
   );
 
   const playSampleFlight = () => {
+    analysisRunRef.current += 1;
+    setAnalysisProgress(null);
     setSegments([...sampleFlight]);
+    setSourceSegments([...sampleFlight]);
     setActiveId(sampleFlight[0].id);
     setSourceLabel(sampleFlightSource.label);
     setUsingSample(true);
     setFollowPlayback(true);
+    setPlayhead(0);
+    setCustomVideoUrl(null);
     setStarted(true);
-    setMessage("The recorded flight is becoming thread in real time.");
+    setMessage("The gold shuttle follows the source video as it weaves.");
 
-    const video = demoVideoRef.current;
-    if (video) {
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById("experience")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const video = demoVideoRef.current;
+      if (!video) return;
       video.currentTime = 0;
+      video.load();
       void video.play().catch(() => {
-        setMessage("The weave is ready. Press play on the source flight.");
+        setMessage("The weave is ready. Press play on the source video.");
       });
-    }
+    });
   };
 
   const enableSound = async () => {
@@ -372,9 +524,7 @@ export function FlightLoom() {
     audioRef.current = { context, master, oscillators };
     setSoundOn(true);
     setStarted(true);
-    if (usingSample) {
-      void demoVideoRef.current?.play();
-    }
+    void demoVideoRef.current?.play();
   };
 
   const moveActive = (direction: -1 | 1) => {
@@ -387,87 +537,163 @@ export function FlightLoom() {
       moveSegment(current, activeIndex, destination),
     );
     setFollowPlayback(false);
-    setMessage("The seam moved. The flight now tells a different story.");
+    setMessage("Viewer edit: the selected band moved in the final textile.");
   };
 
   const reverseActive = () => {
     setSegments((current) => toggleReverse(current, activeId));
     setFollowPlayback(false);
     setStarted(true);
-    setMessage(
-      activeSegment.reversed
-        ? "The threads return to the weave."
-        : "This movement is unraveling from its edge.",
-    );
+    setMessage("Viewer edit: the selected band changed direction.");
   };
 
   const loopActive = () => {
     setSegments((current) => cycleRepeats(current, activeId));
     setFollowPlayback(false);
     setStarted(true);
-    setMessage("Repetition thickens the cloth and deepens its voice.");
+    setMessage("Viewer edit: repeating a band makes its threads denser.");
   };
 
   const resetFlight = () => {
+    analysisRunRef.current += 1;
+    setAnalysisProgress(null);
     const video = demoVideoRef.current;
     if (video) {
       video.pause();
       video.currentTime = 0;
     }
     setSegments([...sampleFlight]);
+    setSourceSegments([...sampleFlight]);
     setActiveId(sampleFlight[0].id);
     setStarted(false);
     setSourceLabel(sampleFlightSource.label);
     setUsingSample(true);
     setFollowPlayback(true);
-    setMessage("One flight. Five movements. Infinite weaves.");
+    setPlayhead(0);
+    setCustomVideoUrl(null);
+    setMessage("Press play to watch this flight become a textile.");
   };
 
   const analyzeFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file) return;
 
+    const runId = analysisRunRef.current + 1;
+    analysisRunRef.current = runId;
     setAnalysisProgress(0);
-    setMessage("Reading motion and color locally in your browser…");
+    setMessage("Sampling motion and color locally in your browser.");
     try {
       const { analyzeVideoFile } = await import("../lib/analyze-video");
-      const analyzed = await analyzeVideoFile(file, setAnalysisProgress);
+      const analyzed = await analyzeVideoFile(file, (progress) => {
+        if (analysisRunRef.current === runId) {
+          setAnalysisProgress(progress);
+        }
+      });
+      if (analysisRunRef.current !== runId) return;
+
       demoVideoRef.current?.pause();
       setSegments(analyzed);
+      setSourceSegments(analyzed);
       setActiveId(analyzed[0].id);
       setSourceLabel(file.name);
+      setCustomVideoUrl(URL.createObjectURL(file));
       setUsingSample(false);
-      setFollowPlayback(false);
+      setFollowPlayback(true);
+      setPlayhead(0);
       setStarted(true);
       setMessage(
-        "The clip is now cloth. Select a movement to reshape its future.",
+        "Analysis complete. Press play to watch your clip drive the weave.",
       );
+      window.requestAnimationFrame(() => {
+        document
+          .getElementById("experience")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     } catch (error) {
+      if (analysisRunRef.current !== runId) return;
       setMessage(
         error instanceof Error
           ? error.message
           : "This clip could not be analyzed. The sample flight is still ready.",
       );
     } finally {
-      setAnalysisProgress(null);
-      event.target.value = "";
+      if (analysisRunRef.current === runId) {
+        setAnalysisProgress(null);
+      }
+      input.value = "";
+    }
+  };
+
+  const focusSegment = (segment: FlightSegment) => {
+    setActiveId(segment.id);
+    setFollowPlayback(false);
+    setStarted(true);
+
+    const sourceIndex = sourceSegments.findIndex(
+      ({ id }) => id === segment.id,
+    );
+    if (sourceIndex >= 0) {
+      const segmentStart = sourceSegments
+        .slice(0, sourceIndex)
+        .reduce((total, item) => total + item.duration, 0);
+      const seekTime = segmentStart + sourceSegments[sourceIndex].duration * 0.12;
+      const video = demoVideoRef.current;
+      if (video) {
+        video.pause();
+        video.currentTime = seekTime;
+      }
+      setPlayhead(seekTime);
+    }
+
+    setMessage(
+      `Paused on "${segment.label}" so you can compare its source and woven band.`,
+    );
+  };
+
+  const resumeSource = () => {
+    setFollowPlayback(true);
+    setStarted(true);
+    setMessage("Following the original source timing again.");
+    void demoVideoRef.current?.play().catch(() => {
+      setMessage("Press play on the source video to resume synchronization.");
+    });
+  };
+
+  const handleTimeUpdate = (event: React.SyntheticEvent<HTMLVideoElement>) => {
+    const time = Math.min(
+      event.currentTarget.currentTime,
+      Math.max(0, totalDuration - 0.001),
+    );
+    setPlayhead(time);
+    if (!followPlayback) return;
+
+    let elapsed = 0;
+    const movement =
+      sourceSegments.find((segment) => {
+        elapsed += segment.duration;
+        return time < elapsed;
+      }) ?? sourceSegments[sourceSegments.length - 1];
+
+    if (movement && movement.id !== activeId) {
+      setActiveId(movement.id);
     }
   };
 
   return (
     <main className="flight-loom">
       <header className="loom-header">
-        <div className="brand-lockup">
+        <a className="brand-lockup" href="#top" aria-label="Flight Loom home">
           <span className="brand-mark" aria-hidden="true">
             FL
           </span>
-          <div>
-            <p className="eyebrow">Flight Loom / Digital textile 001</p>
-            <h1>Weave the motion of flight.</h1>
-          </div>
-        </div>
+          <span>
+            <strong>Flight Loom</strong>
+            <small>Drone video to digital textile</small>
+          </span>
+        </a>
         <div className="header-actions">
-          <span className="privacy-note">Local analysis · No upload</span>
+          <span className="privacy-note">Private local analysis</span>
           <button
             className="text-button"
             type="button"
@@ -482,189 +708,356 @@ export function FlightLoom() {
         </div>
       </header>
 
-      <section className="loom-stage" aria-label="Interactive flight tapestry">
-        <FlightCanvas
-          segments={segments}
-          activeId={activeId}
-          started={started}
-        />
-        {!started && (
-          <div className="stage-intro">
-            <p className="eyebrow">Motion becomes thread</p>
-            <h2>A flight is more than a recording.</h2>
-            <p>
-              It is a sequence of pressure, direction, color, and return. Start
-              the loom to make those movements tangible.
-            </p>
-            <div className="stage-actions">
-              <button
-                className="primary-button"
-                type="button"
-                onClick={playSampleFlight}
-              >
-                Weave the sample flight
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                Weave your own clip
-              </button>
-            </div>
+      <section className="hero" id="top">
+        <div className="hero-copy">
+          <p className="eyebrow">Interactive generative art</p>
+          <h1>Every flight leaves a hidden textile.</h1>
+          <p className="hero-summary">
+            Flight Loom samples visible motion and color from a drone video,
+            then turns those values into moving digital threads you can remix.
+          </p>
+          <div className="hero-actions">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={playSampleFlight}
+            >
+              Try the demo flight
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Upload your video
+            </button>
           </div>
-        )}
-
-        <div
-          className={`source-preview ${
-            started && usingSample ? "is-visible" : ""
-          }`}
-          aria-hidden={!started || !usingSample}
-        >
-          <video
-            ref={demoVideoRef}
-            poster={sampleFlightSource.posterSrc}
-            muted
-            playsInline
-            controls
-            preload="metadata"
-            aria-label="Recorded source drone flight"
-            onPlay={() => setStarted(true)}
-            onTimeUpdate={(event) => {
-              if (!followPlayback) return;
-
-              const time = Math.min(
-                event.currentTarget.currentTime,
-                sampleFlightSource.duration - 0.001,
-              );
-              let elapsed = 0;
-              const movement =
-                sampleFlight.find((segment) => {
-                  elapsed += segment.duration;
-                  return time < elapsed;
-                }) ?? sampleFlight[sampleFlight.length - 1];
-
-              if (movement && movement.id !== activeId) {
-                setActiveId(movement.id);
-              }
-            }}
-          >
-            <source src={sampleFlightSource.webmSrc} type="video/webm" />
-            <source src={sampleFlightSource.videoSrc} type="video/mp4" />
-          </video>
-          <p>
-            <strong>Recorded source</strong>
-            <span>
-              {sampleFlightSource.credit} · {sampleFlightSource.duration}s
-            </span>
+          <p className="hero-note">
+            Your video stays on this device. No account, server upload, or
+            telemetry required.
           </p>
         </div>
 
-        <div className="stage-readout">
-          <div>
-            <span>Source</span>
-            <strong>{sourceLabel}</strong>
+        <div className="process-strip" aria-label="How Flight Loom works">
+          <div className="process-step">
+            <span>01</span>
+            <strong>Source video</strong>
+            <small>Play a recorded drone flight</small>
           </div>
-          <div>
-            <span>Current state</span>
-            <strong>{analysisProgress === null ? mood : "Analyzing"}</strong>
+          <span className="process-arrow" aria-hidden="true">
+            →
+          </span>
+          <div className="process-step">
+            <span>02</span>
+            <strong>Motion sample</strong>
+            <small>Read frame change, drift, and color</small>
           </div>
-          <div>
-            <span>Movement</span>
-            <strong>{activeSegment?.label ?? "Waiting"}</strong>
+          <span className="process-arrow" aria-hidden="true">
+            →
+          </span>
+          <div className="process-step">
+            <span>03</span>
+            <strong>Digital textile</strong>
+            <small>Map those values into live threads</small>
           </div>
         </div>
       </section>
 
-      <section className="loom-tray" aria-label="Flight movements">
-        <div className="tray-heading">
+      <section className="experience" id="experience">
+        <div className="experience-heading">
           <div>
-            <p className="eyebrow">The loom tray</p>
-            <p className="status-message" aria-live="polite">
-              {analysisProgress === null
-                ? message
-                : `Analyzing frame ${Math.round(analysisProgress * 100)}%`}
-            </p>
+            <p className="eyebrow">The live translation</p>
+            <h2>See one moment become one woven band.</h2>
           </div>
-          <div className="mapping-legend" aria-label="Artwork mapping">
-            <span>Visual drift → angle</span>
-            <span>Frame change → density</span>
-            <span>Color → thread</span>
-            <span>Drift bend → curvature</span>
-          </div>
+          <p className="status-message" aria-live="polite">
+            {analysisProgress === null
+              ? message
+              : `Analyzing local frames: ${Math.round(analysisProgress * 100)}%`}
+          </p>
         </div>
 
-        <div className="segment-row">
-          {segments.map((segment, index) => (
-            <button
-              className={`segment-swatch ${
-                segment.id === activeId ? "is-active" : ""
-              }`}
-              key={segment.id}
-              type="button"
-              onClick={() => {
-                setActiveId(segment.id);
-                setFollowPlayback(false);
-                setStarted(true);
-                if (usingSample) {
-                  void demoVideoRef.current?.play();
+        <div className="flow-grid">
+          <article className="flow-panel source-panel">
+            <div className="panel-heading">
+              <span className="step-number">01</span>
+              <div>
+                <p>SOURCE VIDEO</p>
+                <strong>{sourceLabel}</strong>
+              </div>
+            </div>
+            <div className="video-shell">
+              <video
+                key={usingSample ? "sample-flight" : customVideoUrl}
+                ref={demoVideoRef}
+                className="source-video"
+                src={!usingSample ? customVideoUrl ?? undefined : undefined}
+                poster={
+                  usingSample ? sampleFlightSource.posterSrc : undefined
                 }
-              }}
-              style={
-                {
-                  "--swatch-a": segment.palette[0],
-                  "--swatch-b": segment.palette[1],
-                  "--swatch-c": segment.palette[2],
-                } as React.CSSProperties
-              }
-              aria-pressed={segment.id === activeId}
+                muted
+                playsInline
+                controls
+                preload="metadata"
+                aria-label="Source drone video"
+                onPlay={() => {
+                  setStarted(true);
+                  setMessage(
+                    "The highlighted motion sample is shaping the active band.",
+                  );
+                }}
+                onTimeUpdate={handleTimeUpdate}
+                onEnded={() =>
+                  setMessage(
+                    "The source flight is complete. Remix any band below.",
+                  )
+                }
+              >
+                {usingSample && (
+                  <>
+                    <source
+                      src={sampleFlightSource.webmSrc}
+                      type="video/webm"
+                    />
+                    <source
+                      src={sampleFlightSource.videoSrc}
+                      type="video/mp4"
+                    />
+                  </>
+                )}
+              </video>
+              {analysisProgress !== null && (
+                <div className="analysis-overlay" aria-hidden="true">
+                  <span
+                    style={
+                      {
+                        "--analysis-progress": `${analysisProgress * 100}%`,
+                      } as CSSProperties
+                    }
+                  />
+                  <strong>
+                    Sampling frames {Math.round(analysisProgress * 100)}%
+                  </strong>
+                </div>
+              )}
+            </div>
+            <div className="source-meta">
+              <span>
+                {formatTime(playhead)} / {formatTime(totalDuration)}
+              </span>
+              <span>{usingSample ? sampleFlightSource.credit : "Local file"}</span>
+            </div>
+          </article>
+
+          <article className="flow-panel signature-panel">
+            <div className="panel-heading">
+              <span className="step-number">02</span>
+              <div>
+                <p>MOTION SAMPLE</p>
+                <strong>{activeSegment?.label ?? "Waiting for video"}</strong>
+              </div>
+            </div>
+
+            {activeSegment && (
+              <>
+                <div className="drift-field">
+                  <span>Screen drift</span>
+                  <div className="drift-crosshair" aria-hidden="true">
+                    <span
+                      className="drift-arrow"
+                      style={
+                        {
+                          "--drift-angle": `${driftAngle}deg`,
+                        } as CSSProperties
+                      }
+                    />
+                  </div>
+                  <strong>
+                    {horizontalDriftLabel(activeSegment.turn)},{" "}
+                    {verticalDriftLabel(activeSegment.lift)}
+                  </strong>
+                </div>
+
+                <div className="metrics">
+                  <MetricRow
+                    label="Motion energy"
+                    value={`${Math.round(activeSegment.energy * 100)}%`}
+                    amount={activeSegment.energy}
+                    result={`becomes ${threadCount} moving threads`}
+                  />
+                  <MetricRow
+                    label="Frame change"
+                    value={`${Math.round(activeSegment.sceneShift * 100)}%`}
+                    amount={activeSegment.sceneShift}
+                    result="adds warp variation"
+                  />
+                  <MetricRow
+                    label="Horizontal drift"
+                    value={signedPercent(activeSegment.turn)}
+                    amount={activeSegment.turn}
+                    result={horizontalDriftLabel(activeSegment.turn)}
+                    signed
+                  />
+                  <MetricRow
+                    label="Vertical drift"
+                    value={signedPercent(activeSegment.lift)}
+                    amount={activeSegment.lift}
+                    result={verticalDriftLabel(activeSegment.lift)}
+                    signed
+                  />
+                </div>
+
+                <div className="palette-readout">
+                  <span>Sampled colors become thread</span>
+                  <div>
+                    {activeSegment.palette.map((color) => (
+                      <i
+                        key={color}
+                        style={{ backgroundColor: color }}
+                        title={color}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </article>
+
+          <article className="flow-panel output-panel">
+            <div className="panel-heading">
+              <span className="step-number">03</span>
+              <div>
+                <p>DIGITAL TEXTILE</p>
+                <strong>
+                  {followPlayback ? "Following source" : "Viewer remix"}
+                </strong>
+              </div>
+              <span className="live-state">
+                <i aria-hidden="true" />
+                {started ? "Live" : "Ready"}
+              </span>
+            </div>
+            <div className="canvas-shell">
+              <FlightCanvas
+                segments={segments}
+                activeId={activeId}
+                started={started}
+                revealProgress={revealProgress}
+              />
+              {!started && (
+                <button
+                  type="button"
+                  className="canvas-start"
+                  onClick={playSampleFlight}
+                >
+                  Play flight and start weaving
+                </button>
+              )}
+            </div>
+            <div className="output-caption">
+              <span>{mood}</span>
+              <span>
+                Gold shuttle = current source position
+              </span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section className="remix-section" aria-label="Flight timeline and remix">
+        <div className="remix-heading">
+          <div>
+            <p className="eyebrow">
+              {hasViewerEdits ? "Remixed band order" : "Source timeline"}
+            </p>
+            <h2>Select a moment, then change its band.</h2>
+          </div>
+          {!followPlayback && (
+            <button
+              type="button"
+              className="follow-button"
+              onClick={resumeSource}
             >
-              <span className="swatch-index">
-                {String(index + 1).padStart(2, "0")}
-              </span>
-              <span className="swatch-weave" aria-hidden="true" />
-              <span className="swatch-copy">
-                <strong>{segment.label}</strong>
-                <small>
-                  {segment.reversed ? "Unraveling" : "Woven"} · ×
-                  {segment.repeats}
-                </small>
-              </span>
+              Follow source again
             </button>
-          ))}
+          )}
         </div>
 
-        <div className="loom-controls">
-          <div className="movement-meta">
-            <span>Selected movement</span>
+        <div className="timeline">
+          {!hasViewerEdits ? (
+            <div className="timeline-rail" aria-hidden="true">
+              <span style={{ width: `${playheadPercent}%` }} />
+              <i style={{ left: `${playheadPercent}%` }} />
+            </div>
+          ) : (
+            <p className="remix-order-note">
+              Cards now show your artwork order. Source timing remains on the
+              video above.
+            </p>
+          )}
+          <div className="segment-row">
+            {segments.map((segment, index) => (
+              <button
+                className={`segment-card ${
+                  segment.id === activeId ? "is-active" : ""
+                }`}
+                key={segment.id}
+                type="button"
+                onClick={() => focusSegment(segment)}
+                style={
+                  {
+                    "--swatch-a": segment.palette[0],
+                    "--swatch-b": segment.palette[1],
+                    "--swatch-c": segment.palette[2],
+                  } as CSSProperties
+                }
+                aria-pressed={segment.id === activeId}
+              >
+                <span className="segment-index">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <span className="segment-weave" aria-hidden="true" />
+                <span className="segment-copy">
+                  <strong>{segment.label}</strong>
+                  <small>
+                    {segment.reversed ? "Reversed" : "Forward"} · repeat ×
+                    {segment.repeats}
+                  </small>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="edit-bar">
+          <div className="edit-label">
+            <span>Viewer edits</span>
             <strong>{activeSegment?.label}</strong>
+            <small>These controls change the artwork, not the source video.</small>
           </div>
           <div className="control-group">
             <button
               type="button"
               onClick={() => moveActive(-1)}
               disabled={activeIndex === 0}
-              aria-label="Move selected movement earlier"
             >
-              ← Reweave
+              Move earlier
             </button>
             <button
               type="button"
               onClick={() => moveActive(1)}
               disabled={activeIndex === segments.length - 1}
-              aria-label="Move selected movement later"
             >
-              Reweave →
+              Move later
             </button>
             <button
               type="button"
               onClick={reverseActive}
               aria-pressed={activeSegment?.reversed}
             >
-              {activeSegment?.reversed ? "Restore" : "Unravel"}
+              {activeSegment?.reversed ? "Restore direction" : "Reverse band"}
             </button>
             <button type="button" onClick={loopActive}>
-              Loop ×{activeSegment?.repeats ?? 1}
+              Repeat ×{activeSegment?.repeats ?? 1}
             </button>
           </div>
           <button
@@ -673,24 +1066,36 @@ export function FlightLoom() {
             onClick={() => fileInputRef.current?.click()}
             disabled={analysisProgress !== null}
           >
-            {analysisProgress === null ? "Load a flight" : "Reading the clip…"}
+            {analysisProgress === null ? "Analyze another video" : "Analyzing"}
           </button>
-          <input
-            ref={fileInputRef}
-            className="visually-hidden"
-            type="file"
-            accept="video/mp4,video/quicktime,video/webm"
-            tabIndex={-1}
-            aria-hidden="true"
-            onChange={analyzeFile}
-          />
         </div>
       </section>
 
+      <section className="method-note">
+        <p className="eyebrow">How the mapping works</p>
+        <h2>Artistic visual analysis, not flight telemetry.</h2>
+        <p>
+          Flight Loom samples 24–32 frames in your browser. Changes between
+          frames shape thread density; brightness-center drift bends the weave;
+          sampled colors dye the threads. These are expressive visual
+          approximations—not precise optical flow, GPS, or aircraft telemetry.
+        </p>
+      </section>
+
       <footer className="loom-footer">
-        <p>One flight. Infinite weaves.</p>
-        <p>Built for Hack the Arts · 2026</p>
+        <p>Flight Loom · One flight, infinite weaves.</p>
+        <p>Built for Hack the Arts 2026</p>
       </footer>
+
+      <input
+        ref={fileInputRef}
+        className="visually-hidden"
+        type="file"
+        accept="video/mp4,video/quicktime,video/webm"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={analyzeFile}
+      />
     </main>
   );
 }
