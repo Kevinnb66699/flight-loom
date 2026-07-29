@@ -413,7 +413,7 @@ export function FlightLoom() {
   ]);
   const [selectedBandId, setSelectedBandId] = useState(sampleFlight[0].id);
   const [started, setStarted] = useState(false);
-  const [soundOn, setSoundOn] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [analysisProgress, setAnalysisProgress] = useState<number | null>(null);
   const [sourceLabel, setSourceLabel] = useState<string>(
     sampleFlightSource.label,
@@ -430,7 +430,12 @@ export function FlightLoom() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const analysisRunRef = useRef(0);
   const lastSoundTimeRef = useRef(Number.NEGATIVE_INFINITY);
-  const soundTransitionRef = useRef(false);
+  const soundEnabledRef = useRef(true);
+  const audioGenerationRef = useRef(0);
+  const audioInitTokenRef = useRef<object | null>(null);
+  const audioInitPromiseRef = useRef<Promise<FlightAudioRig | null> | null>(
+    null,
+  );
   const pendingAudioContextRef = useRef<AudioContext | null>(null);
   const mountedRef = useRef(true);
 
@@ -485,6 +490,10 @@ export function FlightLoom() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      soundEnabledRef.current = false;
+      audioGenerationRef.current += 1;
+      audioInitTokenRef.current = null;
+      audioInitPromiseRef.current = null;
       const pendingContext = pendingAudioContextRef.current;
       pendingAudioContextRef.current = null;
       if (pendingContext) {
@@ -514,8 +523,8 @@ export function FlightLoom() {
     hushFlightAmbient(audioRef.current);
     stopFlightNotes(audioRef.current);
     setMessage("The gold shuttle follows the source video as it weaves.");
-    if (audioRef.current) {
-      void resumeFlightAudioRig(audioRef.current);
+    if (soundEnabledRef.current) {
+      void ensureSoundscape();
     }
 
     window.requestAnimationFrame(() => {
@@ -532,102 +541,154 @@ export function FlightLoom() {
     });
   };
 
-  const enableSound = async () => {
-    if (soundTransitionRef.current) return;
-    soundTransitionRef.current = true;
-
+  const ensureSoundscape = async (): Promise<FlightAudioRig | null> => {
     const currentRig = audioRef.current;
     if (currentRig) {
-      audioRef.current = null;
-      setSoundOn(false);
-      hushFlightAmbient(currentRig);
-      stopFlightNotes(currentRig);
-      setMessage("Soundscape off.");
+      const generation = audioGenerationRef.current;
+      const running = await resumeFlightAudioRig(currentRig);
+      return running &&
+        mountedRef.current &&
+        soundEnabledRef.current &&
+        generation === audioGenerationRef.current &&
+        audioRef.current === currentRig
+        ? currentRig
+        : null;
+    }
+
+    if (audioInitPromiseRef.current) {
+      return audioInitPromiseRef.current;
+    }
+
+    if (typeof AudioContext === "undefined") {
+      soundEnabledRef.current = false;
+      setSoundEnabled(false);
+      setMessage("Web Audio is not supported in this browser.");
+      return null;
+    }
+
+    const generation = audioGenerationRef.current;
+    const initializationToken = {};
+    audioInitTokenRef.current = initializationToken;
+    let context: AudioContext | null = null;
+    const initialization = (async () => {
       try {
-        await closeFlightAudioRig(currentRig);
+        context = new AudioContext();
+        pendingAudioContextRef.current = context;
+        if (context.state !== "running") {
+          await context.resume();
+        }
+
+        if (
+          !mountedRef.current ||
+          !soundEnabledRef.current ||
+          generation !== audioGenerationRef.current ||
+          pendingAudioContextRef.current !== context
+        ) {
+          await context.close().catch(() => undefined);
+          return null;
+        }
+
+        const rig = createFlightAudioRig(context);
+        audioRef.current = rig;
+        pendingAudioContextRef.current = null;
+        return rig;
       } catch {
-        // The browser may already have released an interrupted audio context.
-      } finally {
-        soundTransitionRef.current = false;
+        if (pendingAudioContextRef.current === context) {
+          pendingAudioContextRef.current = null;
+        }
+        if (context) {
+          await context.close().catch(() => undefined);
+        }
+        if (
+          mountedRef.current &&
+          soundEnabledRef.current &&
+          generation === audioGenerationRef.current
+        ) {
+          setMessage(
+            "Soundscape is enabled. Press play or tap Soundscape to retry.",
+          );
+        }
+        return null;
       }
+    })().finally(() => {
+      if (audioInitTokenRef.current === initializationToken) {
+        audioInitTokenRef.current = null;
+        audioInitPromiseRef.current = null;
+      }
+    });
+
+    audioInitPromiseRef.current = initialization;
+    return initialization;
+  };
+
+  const disableSoundscape = async () => {
+    soundEnabledRef.current = false;
+    setSoundEnabled(false);
+    audioGenerationRef.current += 1;
+    const disableGeneration = audioGenerationRef.current;
+    audioInitTokenRef.current = null;
+    audioInitPromiseRef.current = null;
+
+    const pendingContext = pendingAudioContextRef.current;
+    pendingAudioContextRef.current = null;
+    const currentRig = audioRef.current;
+    audioRef.current = null;
+    hushFlightAmbient(currentRig);
+    stopFlightNotes(currentRig);
+
+    await Promise.all([
+      pendingContext?.close().catch(() => undefined),
+      currentRig
+        ? closeFlightAudioRig(currentRig).catch(() => undefined)
+        : undefined,
+    ]);
+
+    if (
+      mountedRef.current &&
+      !soundEnabledRef.current &&
+      audioGenerationRef.current === disableGeneration
+    ) {
+      setMessage("Soundscape off.");
+    }
+  };
+
+  const toggleSoundscape = () => {
+    if (soundEnabledRef.current) {
+      void disableSoundscape();
       return;
     }
 
-    let pendingContext: AudioContext | null = null;
-    let pendingRig: FlightAudioRig | null = null;
-    try {
-      if (typeof AudioContext === "undefined") {
-        throw new Error("Web Audio is not supported in this browser.");
-      }
-      if (!sourceActiveSegment) {
-        throw new Error("No flight movement is available to sonify.");
-      }
-
-      pendingContext = new AudioContext();
-      pendingAudioContextRef.current = pendingContext;
-      if (pendingContext.state !== "running") {
-        await pendingContext.resume();
-      }
-      if (!mountedRef.current) {
-        await pendingContext.close();
+    soundEnabledRef.current = true;
+    setSoundEnabled(true);
+    audioGenerationRef.current += 1;
+    setMessage("Soundscape on. It will begin with playback.");
+    void ensureSoundscape().then((rig) => {
+      const video = demoVideoRef.current;
+      if (
+        !rig ||
+        !video ||
+        video.paused ||
+        !sourceActiveSegment ||
+        !soundEnabledRef.current
+      ) {
         return;
       }
-      pendingRig = createFlightAudioRig(pendingContext);
-      audioRef.current = pendingRig;
-      pendingAudioContextRef.current = null;
-      updateFlightAmbient(pendingRig, sourceActiveSegment);
-      playFlightNote(pendingRig, sourceActiveSegment, sourceActiveIndex);
-      lastSoundTimeRef.current = playhead;
-      setSoundOn(true);
-      setStarted(true);
-      setMessage(
-        "Soundscape on: motion now triggers soft pentatonic notes.",
-      );
-      void demoVideoRef.current?.play().catch(() => {
-        if (audioRef.current !== pendingRig) return;
-        hushFlightAmbient(pendingRig);
-        setMessage(
-          "Soundscape is ready. Press play on the source video to hear it.",
-        );
-      });
-    } catch (error) {
-      audioRef.current = null;
-      if (pendingAudioContextRef.current === pendingContext) {
-        pendingAudioContextRef.current = null;
-      }
-      try {
-        if (pendingRig) {
-          await closeFlightAudioRig(pendingRig);
-        } else if (pendingContext) {
-          await pendingContext.close();
-        }
-      } catch {
-        // The failed audio context may already be closed.
-      }
-      if (mountedRef.current) {
-        setSoundOn(false);
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : "The soundscape could not start in this browser.",
-        );
-      }
-    } finally {
-      soundTransitionRef.current = false;
-    }
+      updateFlightAmbient(rig, sourceActiveSegment);
+      playFlightNote(rig, sourceActiveSegment, sourceActiveIndex);
+      lastSoundTimeRef.current = video.currentTime;
+    });
   };
 
   const previewSegmentSound = (
     segment: FlightSegment,
     segmentIndex = selectedIndex,
   ) => {
-    const rig = audioRef.current;
-    if (!rig) return;
-    stopFlightNotes(rig);
-    lastSoundTimeRef.current = playhead;
-    void resumeFlightAudioRig(rig).then((running) => {
-      if (running && audioRef.current === rig) {
+    if (!soundEnabledRef.current) return;
+    void ensureSoundscape().then((rig) => {
+      if (rig && audioRef.current === rig && soundEnabledRef.current) {
+        stopFlightNotes(rig);
         playFlightNote(rig, segment, segmentIndex);
+        lastSoundTimeRef.current = playhead;
       }
     });
   };
@@ -787,8 +848,8 @@ export function FlightLoom() {
     }
     setStarted(true);
     setMessage("Following the original source timing again.");
-    if (audioRef.current) {
-      void resumeFlightAudioRig(audioRef.current);
+    if (soundEnabledRef.current) {
+      void ensureSoundscape();
     }
     void demoVideoRef.current?.play().catch(() => {
       setMessage("Press play on the source video to resume synchronization.");
@@ -852,6 +913,45 @@ export function FlightLoom() {
     }
   };
 
+  const unlockSoundscape = () => {
+    if (soundEnabledRef.current) {
+      void ensureSoundscape();
+    }
+  };
+
+  const handleVideoPlay = (
+    event: React.SyntheticEvent<HTMLVideoElement>,
+  ) => {
+    const video = event.currentTarget;
+    setStarted(true);
+    setMessage(
+      "The highlighted motion sample is shaping the active band.",
+    );
+    if (!soundEnabledRef.current) return;
+
+    const sourcePosition = findSegmentAtTime(
+      sourceSegments,
+      video.currentTime,
+    );
+    const movement = sourcePosition?.segment ?? sourceActiveSegment;
+    const movementIndex = sourcePosition?.index ?? sourceActiveIndex;
+    if (!movement) return;
+
+    void ensureSoundscape().then((rig) => {
+      if (
+        !rig ||
+        video.paused ||
+        !soundEnabledRef.current ||
+        audioRef.current !== rig
+      ) {
+        return;
+      }
+      updateFlightAmbient(rig, movement);
+      playFlightNote(rig, movement, movementIndex);
+      lastSoundTimeRef.current = video.currentTime;
+    });
+  };
+
   return (
     <main className="flight-loom">
       <header className="loom-header">
@@ -869,10 +969,10 @@ export function FlightLoom() {
           <button
             className="text-button"
             type="button"
-            onClick={enableSound}
-            aria-pressed={soundOn}
+            onClick={toggleSoundscape}
+            aria-pressed={soundEnabled}
           >
-            Soundscape {soundOn ? "on" : "off"}
+            Soundscape {soundEnabled ? "on" : "off"}
           </button>
           <button className="text-button" type="button" onClick={resetFlight}>
             Reset
@@ -971,15 +1071,13 @@ export function FlightLoom() {
                 controls
                 preload="metadata"
                 aria-label="Source drone video"
-                onPlay={() => {
-                  setStarted(true);
-                  if (audioRef.current) {
-                    void resumeFlightAudioRig(audioRef.current);
+                onPointerDown={unlockSoundscape}
+                onKeyDown={(event) => {
+                  if (event.key === " " || event.key === "Enter") {
+                    unlockSoundscape();
                   }
-                  setMessage(
-                    "The highlighted motion sample is shaping the active band.",
-                  );
                 }}
+                onPlay={handleVideoPlay}
                 onPause={() => {
                   hushFlightAmbient(audioRef.current);
                   stopFlightNotes(audioRef.current);

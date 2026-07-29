@@ -48,6 +48,10 @@ test("server-renders the Flight Loom experience", async () => {
   assert.match(html, /\/demo\/flight-loom-source\.webm/);
   assert.match(html, /Project-provided drone footage/);
   assert.match(html, /Private local analysis/);
+  assert.match(
+    html,
+    /aria-pressed="true"[^>]*>Soundscape\s*(?:<!-- -->)?on<\/button>/,
+  );
   assert.doesNotMatch(html, /codex-preview/);
   assert.doesNotMatch(html, /Your site is taking shape/);
   assert.doesNotMatch(html, /react-loading-skeleton/);
