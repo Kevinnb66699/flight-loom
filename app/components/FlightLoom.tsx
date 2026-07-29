@@ -162,13 +162,13 @@ function FlightCanvas({
         const active = segment.id === activeId;
         const direction = segment.reversed ? -1 : 1;
         const density = Math.round(10 + segment.energy * 20);
-        const bend = segment.turn * bandWidth * 0.34;
-        const lift = segment.lift * clothHeight * 0.2;
+        const bend = segment.turn * bandWidth * 0.56;
+        const lift = segment.lift * clothHeight * 0.3;
 
         const wash = context.createLinearGradient(xStart, top, xEnd, top);
-        wash.addColorStop(0, `${segment.palette[0]}24`);
-        wash.addColorStop(0.5, `${segment.palette[1]}38`);
-        wash.addColorStop(1, `${segment.palette[2]}24`);
+        wash.addColorStop(0, `${segment.palette[0]}${active ? "38" : "24"}`);
+        wash.addColorStop(0.5, `${segment.palette[1]}${active ? "52" : "3d"}`);
+        wash.addColorStop(1, `${segment.palette[2]}${active ? "38" : "24"}`);
         context.fillStyle = wash;
         context.fillRect(xStart, top, bandWidth, clothHeight);
 
@@ -186,7 +186,7 @@ function FlightCanvas({
               Math.sin(
                 time * 1.8 * direction + thread * 0.42 + segmentIndex,
               ) *
-              (1.5 + segment.energy * 4);
+              (2.2 + segment.energy * 5);
             const y = top + ratio * clothHeight + pulse + repeatOffset;
 
             context.beginPath();
@@ -199,11 +199,20 @@ function FlightCanvas({
               xEnd + 2,
               y - lift * 0.15,
             );
-            context.strokeStyle =
+            const threadColor =
               segment.palette[(thread + repeat) % segment.palette.length];
+            context.strokeStyle = threadColor;
             context.globalAlpha =
-              0.25 + segment.energy * 0.32 + repeat * 0.05;
-            context.lineWidth = active ? 1.3 : 0.9;
+              0.42 + segment.energy * 0.4 + repeat * 0.05;
+            context.lineWidth = active ? 2.1 : 1.35;
+            context.shadowColor = threadColor;
+            context.shadowBlur = active ? 4 : 0;
+            context.stroke();
+
+            context.shadowBlur = 0;
+            context.strokeStyle = "rgba(239, 226, 199, 0.62)";
+            context.globalAlpha = active ? 0.48 : 0.27;
+            context.lineWidth = active ? 0.7 : 0.45;
             context.stroke();
           }
         }
@@ -239,6 +248,8 @@ function FlightCanvas({
       });
 
       const warpCount = Math.max(18, Math.round(clothWidth / 13));
+      context.save();
+      context.globalCompositeOperation = "screen";
       for (let warp = 0; warp < warpCount; warp += 1) {
         const ratio = warp / Math.max(1, warpCount - 1);
         const x = left + ratio * clothWidth;
@@ -247,7 +258,7 @@ function FlightCanvas({
           bands[bands.length - 1];
         const wave =
           Math.sin(time + warp * 0.58) *
-          (1 + band.segment.sceneShift * 3.2);
+          (1.5 + band.segment.sceneShift * 4.6);
         context.beginPath();
         context.moveTo(x + wave, top);
         context.bezierCurveTo(
@@ -260,11 +271,18 @@ function FlightCanvas({
         );
         context.strokeStyle =
           band.segment.palette[(warp + 1) % band.segment.palette.length];
-        context.globalAlpha = 0.17;
-        context.lineWidth = 0.75;
+        context.globalAlpha = 0.3;
+        context.lineWidth = 1;
         context.stroke();
+
+        if (warp % 4 === 0) {
+          context.strokeStyle = "rgba(239, 226, 199, 0.38)";
+          context.globalAlpha = 0.22;
+          context.lineWidth = 0.5;
+          context.stroke();
+        }
       }
-      context.globalAlpha = 1;
+      context.restore();
 
       const visibleRatio = started
         ? clamp(revealProgressRef.current, 0.025, 1)
@@ -278,8 +296,8 @@ function FlightCanvas({
           Math.min(width, revealX + 68),
           0,
         );
-        futureMask.addColorStop(0, "rgba(7, 10, 9, 0.56)");
-        futureMask.addColorStop(1, "rgba(7, 10, 9, 0.92)");
+        futureMask.addColorStop(0, "rgba(7, 10, 9, 0.18)");
+        futureMask.addColorStop(1, "rgba(7, 10, 9, 0.48)");
         context.fillStyle = futureMask;
         context.fillRect(
           revealX,
