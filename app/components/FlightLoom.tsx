@@ -17,12 +17,17 @@ import {
   sampleFlightSource,
   toggleReverse,
 } from "../lib/flight-data";
-
-type AudioRig = {
-  context: AudioContext;
-  master: GainNode;
-  oscillators: OscillatorNode[];
-};
+import {
+  closeFlightAudioRig,
+  createFlightAudioRig,
+  FlightAudioRig,
+  getFlightSoundSettings,
+  hushFlightAmbient,
+  playFlightNote,
+  resumeFlightAudioRig,
+  stopFlightNotes,
+  updateFlightAmbient,
+} from "../lib/flight-audio";
 
 const clamp = (value: number, min = 0, max = 1) =>
   Math.min(max, Math.max(min, value));
@@ -419,10 +424,14 @@ export function FlightLoom() {
   const [message, setMessage] = useState(
     "Press play to watch this flight become a textile.",
   );
-  const audioRef = useRef<AudioRig | null>(null);
+  const audioRef = useRef<FlightAudioRig | null>(null);
   const demoVideoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const analysisRunRef = useRef(0);
+  const lastSoundTimeRef = useRef(Number.NEGATIVE_INFINITY);
+  const soundTransitionRef = useRef(false);
+  const pendingAudioContextRef = useRef<AudioContext | null>(null);
+  const mountedRef = useRef(true);
 
   const activeIndex = Math.max(
     0,
@@ -462,32 +471,21 @@ export function FlightLoom() {
   );
 
   useEffect(() => {
-    const rig = audioRef.current;
-    if (!rig || !activeSegment) return;
-
-    const now = rig.context.currentTime;
-    const base = 92 + activeSegment.energy * 54 + activeSegment.lift * 18;
-    const ratios = [1, 1.5 + activeSegment.turn * 0.08, 2];
-    rig.oscillators.forEach((oscillator, index) => {
-      oscillator.frequency.setTargetAtTime(
-        Math.max(48, base * ratios[index]),
-        now,
-        0.18,
-      );
-    });
-    rig.master.gain.setTargetAtTime(
-      0.025 + activeSegment.repeats * 0.012,
-      now,
-      0.2,
-    );
-  }, [activeSegment]);
-
-  useEffect(
-    () => () => {
-      void audioRef.current?.context.close();
-    },
-    [],
-  );
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const pendingContext = pendingAudioContextRef.current;
+      pendingAudioContextRef.current = null;
+      if (pendingContext) {
+        void pendingContext.close().catch(() => undefined);
+      }
+      const rig = audioRef.current;
+      audioRef.current = null;
+      if (rig) {
+        void closeFlightAudioRig(rig);
+      }
+    };
+  }, []);
 
   const playSampleFlight = () => {
     analysisRunRef.current += 1;
@@ -501,7 +499,13 @@ export function FlightLoom() {
     setPlayhead(0);
     setCustomVideoUrl(null);
     setStarted(true);
+    lastSoundTimeRef.current = Number.NEGATIVE_INFINITY;
+    hushFlightAmbient(audioRef.current);
+    stopFlightNotes(audioRef.current);
     setMessage("The gold shuttle follows the source video as it weaves.");
+    if (audioRef.current) {
+      void resumeFlightAudioRig(audioRef.current);
+    }
 
     window.requestAnimationFrame(() => {
       document
@@ -518,31 +522,100 @@ export function FlightLoom() {
   };
 
   const enableSound = async () => {
-    if (audioRef.current) {
-      await audioRef.current.context.close();
+    if (soundTransitionRef.current) return;
+    soundTransitionRef.current = true;
+
+    const currentRig = audioRef.current;
+    if (currentRig) {
       audioRef.current = null;
       setSoundOn(false);
+      hushFlightAmbient(currentRig);
+      stopFlightNotes(currentRig);
+      setMessage("Soundscape off.");
+      try {
+        await closeFlightAudioRig(currentRig);
+      } catch {
+        // The browser may already have released an interrupted audio context.
+      } finally {
+        soundTransitionRef.current = false;
+      }
       return;
     }
 
-    const context = new AudioContext();
-    const master = context.createGain();
-    master.gain.value = 0.035;
-    master.connect(context.destination);
-    const oscillators = [0, 1, 2].map((index) => {
-      const oscillator = context.createOscillator();
-      const voice = context.createGain();
-      oscillator.type = index === 0 ? "sine" : "triangle";
-      voice.gain.value = index === 0 ? 0.75 : 0.22;
-      oscillator.connect(voice);
-      voice.connect(master);
-      oscillator.start();
-      return oscillator;
+    let pendingContext: AudioContext | null = null;
+    let pendingRig: FlightAudioRig | null = null;
+    try {
+      if (typeof AudioContext === "undefined") {
+        throw new Error("Web Audio is not supported in this browser.");
+      }
+
+      pendingContext = new AudioContext();
+      pendingAudioContextRef.current = pendingContext;
+      if (pendingContext.state !== "running") {
+        await pendingContext.resume();
+      }
+      if (!mountedRef.current) {
+        await pendingContext.close();
+        return;
+      }
+      pendingRig = createFlightAudioRig(pendingContext);
+      audioRef.current = pendingRig;
+      pendingAudioContextRef.current = null;
+      updateFlightAmbient(pendingRig, activeSegment);
+      playFlightNote(pendingRig, activeSegment, activeIndex);
+      lastSoundTimeRef.current = playhead;
+      setSoundOn(true);
+      setStarted(true);
+      setMessage(
+        "Soundscape on: motion now triggers soft pentatonic notes.",
+      );
+      void demoVideoRef.current?.play().catch(() => {
+        if (audioRef.current !== pendingRig) return;
+        hushFlightAmbient(pendingRig);
+        setMessage(
+          "Soundscape is ready. Press play on the source video to hear it.",
+        );
+      });
+    } catch (error) {
+      audioRef.current = null;
+      if (pendingAudioContextRef.current === pendingContext) {
+        pendingAudioContextRef.current = null;
+      }
+      try {
+        if (pendingRig) {
+          await closeFlightAudioRig(pendingRig);
+        } else if (pendingContext) {
+          await pendingContext.close();
+        }
+      } catch {
+        // The failed audio context may already be closed.
+      }
+      if (mountedRef.current) {
+        setSoundOn(false);
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : "The soundscape could not start in this browser.",
+        );
+      }
+    } finally {
+      soundTransitionRef.current = false;
+    }
+  };
+
+  const previewSegmentSound = (
+    segment: FlightSegment,
+    segmentIndex = activeIndex,
+  ) => {
+    const rig = audioRef.current;
+    if (!rig) return;
+    stopFlightNotes(rig);
+    lastSoundTimeRef.current = playhead;
+    void resumeFlightAudioRig(rig).then((running) => {
+      if (running && audioRef.current === rig) {
+        playFlightNote(rig, segment, segmentIndex);
+      }
     });
-    audioRef.current = { context, master, oscillators };
-    setSoundOn(true);
-    setStarted(true);
-    void demoVideoRef.current?.play();
   };
 
   const moveActive = (direction: -1 | 1) => {
@@ -560,6 +633,12 @@ export function FlightLoom() {
 
   const reverseActive = () => {
     setSegments((current) => toggleReverse(current, activeId));
+    if (activeSegment) {
+      previewSegmentSound(
+        { ...activeSegment, reversed: !activeSegment.reversed },
+        activeIndex,
+      );
+    }
     setFollowPlayback(false);
     setStarted(true);
     setMessage("Viewer edit: the selected band changed direction.");
@@ -567,6 +646,16 @@ export function FlightLoom() {
 
   const loopActive = () => {
     setSegments((current) => cycleRepeats(current, activeId));
+    if (activeSegment) {
+      previewSegmentSound(
+        {
+          ...activeSegment,
+          repeats:
+            activeSegment.repeats >= 3 ? 1 : activeSegment.repeats + 1,
+        },
+        activeIndex,
+      );
+    }
     setFollowPlayback(false);
     setStarted(true);
     setMessage("Viewer edit: repeating a band makes its threads denser.");
@@ -589,6 +678,9 @@ export function FlightLoom() {
     setFollowPlayback(true);
     setPlayhead(0);
     setCustomVideoUrl(null);
+    lastSoundTimeRef.current = Number.NEGATIVE_INFINITY;
+    hushFlightAmbient(audioRef.current);
+    stopFlightNotes(audioRef.current);
     setMessage("Press play to watch this flight become a textile.");
   };
 
@@ -620,6 +712,9 @@ export function FlightLoom() {
       setFollowPlayback(true);
       setPlayhead(0);
       setStarted(true);
+      lastSoundTimeRef.current = Number.NEGATIVE_INFINITY;
+      hushFlightAmbient(audioRef.current);
+      stopFlightNotes(audioRef.current);
       setMessage(
         "Analysis complete. Press play to watch your clip drive the weave.",
       );
@@ -662,7 +757,9 @@ export function FlightLoom() {
         video.currentTime = seekTime;
       }
       setPlayhead(seekTime);
+      lastSoundTimeRef.current = seekTime;
     }
+    previewSegmentSound(segment, Math.max(0, sourceIndex));
 
     setMessage(
       `Paused on "${segment.label}" so you can compare its source and woven band.`,
@@ -673,6 +770,9 @@ export function FlightLoom() {
     setFollowPlayback(true);
     setStarted(true);
     setMessage("Following the original source timing again.");
+    if (audioRef.current) {
+      void resumeFlightAudioRig(audioRef.current);
+    }
     void demoVideoRef.current?.play().catch(() => {
       setMessage("Press play on the source video to resume synchronization.");
     });
@@ -684,14 +784,40 @@ export function FlightLoom() {
       Math.max(0, totalDuration - 0.001),
     );
     setPlayhead(time);
-    if (!followPlayback) return;
 
     let elapsed = 0;
-    const movement =
-      sourceSegments.find((segment) => {
+    const movementIndex = sourceSegments.findIndex((segment) => {
         elapsed += segment.duration;
         return time < elapsed;
-      }) ?? sourceSegments[sourceSegments.length - 1];
+      });
+    const safeMovementIndex =
+      movementIndex >= 0 ? movementIndex : sourceSegments.length - 1;
+    const movement = sourceSegments[safeMovementIndex];
+
+    const rig = audioRef.current;
+    if (rig && movement) {
+      if (rig.context.state !== "running") {
+        void resumeFlightAudioRig(rig);
+      } else {
+        updateFlightAmbient(rig, movement);
+        const settings = getFlightSoundSettings(
+          movement,
+          safeMovementIndex,
+          rig.noteStep,
+        );
+        if (time + 0.1 < lastSoundTimeRef.current) {
+          lastSoundTimeRef.current = Number.NEGATIVE_INFINITY;
+        }
+        if (
+          time - lastSoundTimeRef.current >= settings.intervalSeconds
+        ) {
+          playFlightNote(rig, movement, safeMovementIndex);
+          lastSoundTimeRef.current = time;
+        }
+      }
+    }
+
+    if (!followPlayback) return;
 
     if (movement && movement.id !== activeId) {
       setActiveId(movement.id);
@@ -718,7 +844,7 @@ export function FlightLoom() {
             onClick={enableSound}
             aria-pressed={soundOn}
           >
-            Sound {soundOn ? "on" : "off"}
+            Soundscape {soundOn ? "on" : "off"}
           </button>
           <button className="text-button" type="button" onClick={resetFlight}>
             Reset
@@ -819,16 +945,26 @@ export function FlightLoom() {
                 aria-label="Source drone video"
                 onPlay={() => {
                   setStarted(true);
+                  if (audioRef.current) {
+                    void resumeFlightAudioRig(audioRef.current);
+                  }
                   setMessage(
                     "The highlighted motion sample is shaping the active band.",
                   );
                 }}
+                onPause={() => {
+                  hushFlightAmbient(audioRef.current);
+                  stopFlightNotes(audioRef.current);
+                }}
                 onTimeUpdate={handleTimeUpdate}
-                onEnded={() =>
+                onEnded={() => {
+                  hushFlightAmbient(audioRef.current);
+                  stopFlightNotes(audioRef.current);
+                  lastSoundTimeRef.current = Number.NEGATIVE_INFINITY;
                   setMessage(
                     "The source flight is complete. Remix any band below.",
-                  )
-                }
+                  );
+                }}
               >
                 {usingSample && (
                   <>
