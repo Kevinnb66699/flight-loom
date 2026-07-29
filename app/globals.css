@@ -359,9 +359,9 @@ button:disabled {
 .flow-grid {
   display: grid;
   grid-template-columns:
-    minmax(250px, 0.82fr)
-    minmax(230px, 0.67fr)
-    minmax(410px, 1.32fr);
+    minmax(320px, 1.05fr)
+    minmax(220px, 0.62fr)
+    minmax(410px, 1.38fr);
   gap: 12px;
 }
 
@@ -401,6 +401,10 @@ button:disabled {
   gap: 11px;
 }
 
+.panel-heading > div {
+  min-width: 0;
+}
+
 .step-number {
   width: 34px;
   height: 34px;
@@ -435,6 +439,10 @@ button:disabled {
   max-width: 220px;
   color: var(--cream);
   font-size: 12px;
+}
+
+.source-panel .panel-heading strong {
+  max-width: 100%;
 }
 
 .video-shell {
@@ -962,7 +970,7 @@ button:disabled {
   }
 
   .flow-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.18fr) minmax(0, 0.82fr);
   }
 
   .output-panel {
