@@ -282,7 +282,9 @@ export function FlightLoom() {
   const [started, setStarted] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<number | null>(null);
-  const [sourceLabel, setSourceLabel] = useState(sampleFlightSource.label);
+  const [sourceLabel, setSourceLabel] = useState<string>(
+    sampleFlightSource.label,
+  );
   const [usingSample, setUsingSample] = useState(true);
   const [followPlayback, setFollowPlayback] = useState(true);
   const [message, setMessage] = useState(
